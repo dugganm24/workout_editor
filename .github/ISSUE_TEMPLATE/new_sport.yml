@@ -1,0 +1,30 @@
+name: New sport request
+description: Request or propose support for a new activity type
+labels: [new-sport]
+body:
+  - type: input
+    id: sport
+    attributes:
+      label: Sport / activity type
+      placeholder: e.g. running, cycling, cardio, HIIT
+    validations:
+      required: true
+  - type: textarea
+    id: steps-targets
+    attributes:
+      label: What step and target types does it need?
+      description: >
+        e.g. running needs pace/HR targets with time/distance durations; strength needs
+        reps/weight. Sample workouts help a lot.
+    validations:
+      required: true
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Are you interested in building it?
+      options:
+        - Yes, with guidance
+        - Maybe
+        - No, just requesting
+    validations:
+      required: true

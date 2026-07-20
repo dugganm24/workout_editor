@@ -1,0 +1,27 @@
+name: Bug report
+description: Something is broken
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: workout-json
+    attributes:
+      label: Exported workout JSON (if export-related)
+      description: Attach or paste the exported file — it's usually the whole diagnosis.
+      render: json
+  - type: input
+    id: device
+    attributes:
+      label: Garmin device model (if the bug shows on-watch)
+      placeholder: e.g. Fēnix 8, Forerunner 965
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and OS
+      placeholder: e.g. Chrome 138 on Windows 11
