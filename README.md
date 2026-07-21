@@ -1,8 +1,7 @@
 # Workout Editor
 
-An open-source workout builder for Garmin-compatible devices — a fast, keyboard-friendly
-alternative to Garmin Connect's clunky drag-and-drop workout editor. Strength training first;
-other activity types are on the roadmap and open to contribution.
+A fast, keyboard-friendly alternative to Garmin Connect's clunky drag-and-drop workout 
+editor. Strength training first, other activity types are on the roadmap and open to contribution.
 
 > **Status: under construction.** The project is in early scaffolding. Follow the
 > [roadmap](docs/ARCHITECTURE.md) or open an issue to get involved.
@@ -15,8 +14,7 @@ other activity types are on the roadmap and open to contribution.
 > Chrome extension** ([source](https://github.com/fulippo/share-your-garmin-workout)).
 >
 > Garmin Connect has no built-in way to import structured workout files. The extension adds an
-> **Import** button to the Garmin Connect website that runs with your existing Connect login —
-> no credentials ever touch this app.
+> **Import** button to the Garmin Connect website that runs with your existing Connect login.
 
 The flow:
 
@@ -28,21 +26,21 @@ The flow:
 You can also go the other way: export an existing Connect workout with the extension and import
 it here to edit.
 
-Other delivery paths (`.FIT` file export for USB transfer, direct API sync) are deferred until
-users ask for them — [open an issue](../../issues) if that's you.
+Other delivery paths (`.FIT` file export for USB transfer, direct API sync) are deferred for later
+versions, or until demand is demonstrated.
 
 ## Why not just use Garmin Connect's editor?
 
-- Building repetitive set/rep structures by drag-and-drop is slow and error-prone.
+- Building repetitive set/rep structures by drag-and-drop is slow and finicky.
 - Editing affordances are missing: no duplicate, painful reordering, limited end conditions.
-- Workout Editor is keyboard-friendly, supports repeat blocks, duplication, and fast bulk edits,
+- This editor is keyboard-friendly, supports repeat blocks, duplication, and fast bulk edits,
   and keeps your workout library local to your browser (no account, no server).
 
 ## Development
 
 ```sh
 npm install
-npm run dev        # start the web app (packages/web)
+npm run dev        # start the web app
 npm test           # run all workspace tests
 npm run lint       # oxlint across workspaces
 npm run typecheck  # tsc across workspaces

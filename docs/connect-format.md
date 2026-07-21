@@ -3,7 +3,7 @@
 Our export target is the JSON consumed by the
 [Share your Garmin Connect workout](https://github.com/fulippo/share-your-garmin-workout)
 Chrome extension, which is **Garmin Connect's internal workout-service payload, verbatim**.
-This is an undocumented internal format; everything below is derived from the extension
+This is an undocumented internal format, everything below is derived from the extension
 source (read 2026-07-19) and must be confirmed against golden fixtures (see below).
 
 ## What the extension actually does
@@ -59,7 +59,6 @@ converter and its tests. To produce one:
 3. Drop the file into the fixtures directory with a descriptive name, e.g.
    `strength-5x5-with-rests.json`.
 4. Sanitize: remove/zero `ownerId`, `author`, and any other account-identifying fields
-   (keep the structure — the converter tests exercise omission handling too).
 
 Good fixture coverage to aim for:
 
@@ -70,10 +69,10 @@ Good fixture coverage to aim for:
 - a many-step workout near/above 50 steps (probes whether Connect's limit is server-enforced)
 - a workout with multiple different exercise categories
 
-## Open questions (answer empirically with fixtures)
+## Open questions
 
 - Full `ExecutableStepDTO`/`RepeatGroupDTO` field inventory for `strength_training`.
-- Weight units in the payload (metric always, or user-setting-dependent?).
+- Weight units in the payload.
 - Whether the 50-step editor limit is enforced by the POST endpoint.
 - Whether `stepOrder` must be globally sequential or per-group.
-- Minimum viable payload: which fields can be omitted on POST (fewer is better for us).
+- Minimum viable payload: which fields can be omitted on POST.
