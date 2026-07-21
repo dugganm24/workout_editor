@@ -12,13 +12,13 @@ body:
   - type: textarea
     id: workout-json
     attributes:
-      label: Exported workout JSON (if export-related)
-      description: Attach or paste the exported file — it's usually the whole diagnosis.
+      label: Exported workout JSON
+      description: Attach or paste the exported file.
       render: json
   - type: input
     id: device
     attributes:
-      label: Garmin device model (if the bug shows on-watch)
+      label: Garmin device model
       placeholder: e.g. Fēnix 8, Forerunner 965
   - type: input
     id: browser

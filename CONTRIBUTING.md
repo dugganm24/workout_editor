@@ -1,7 +1,6 @@
 # Contributing to Workout Editor
 
-Thanks for helping build a better workout editor! Contributions of all sizes are welcome —
-bug reports, docs fixes, new features, and especially new sport types.
+Thanks for helping build a better workout editor! Contributions of all sizes are welcome.
 
 ## Getting started
 
@@ -19,11 +18,11 @@ Requirements: Node.js ≥ 20 and npm ≥ 10.
 1. Fork and branch from `main`.
 2. Make your change, with tests where behavior changes.
 3. Run the full check suite locally: `npm run lint && npm run typecheck && npm test`.
-4. Open a PR. CI must be green; every PR gets a live preview deployment to click through.
+4. Open a PR. CI must be green, every PR gets a live preview deployment to click through.
 
 ### Commit messages
 
-We use [Conventional Commits](https://www.conventionalcommits.org/) — they drive automated
+We use [Conventional Commits](https://www.conventionalcommits.org/), they drive automated
 releases and the changelog:
 
 - `feat: add superset support to the step editor`
@@ -51,8 +50,4 @@ before building.
 ## Reporting bugs
 
 Use the bug report issue template. For workout export bugs, please attach the exported JSON
-and name your device model — that's usually the whole diagnosis.
-
-## Code of Conduct
-
-Be kind. This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
+and name your device model.

@@ -1,9 +1,9 @@
-# Deploying (Cloudflare Pages)
+# Deploying
 
 The site deploys via Cloudflare Pages' GitHub integration: every merge to `main` goes to
-production, every PR gets a preview URL. One-time setup (repo owner):
+production, every PR gets a preview URL. One-time setup:
 
-1. Sign up / log in at [dash.cloudflare.com](https://dash.cloudflare.com) (free plan).
+1. Sign up / log in at [dash.cloudflare.com](https://dash.cloudflare.com).
 2. **Workers & Pages → Create → Pages → Connect to Git**, authorize GitHub, pick
    `dugganm24/workout_editor`.
 3. Build settings:
@@ -16,4 +16,4 @@ production, every PR gets a preview URL. One-time setup (repo owner):
      workspaces resolve `@workout-editor/core`)
 4. Save and deploy. PR preview deployments are on by default.
 
-No environment variables or secrets are needed — the site is fully static.
+No environment variables or secrets are needed, the site is fully static.

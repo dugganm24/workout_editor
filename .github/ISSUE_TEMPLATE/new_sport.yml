@@ -14,7 +14,7 @@ body:
     attributes:
       label: What step and target types does it need?
       description: >
-        e.g. running needs pace/HR targets with time/distance durations; strength needs
+        e.g. running needs pace/HR targets with time/distance durations, strength needs
         reps/weight. Sample workouts help a lot.
     validations:
       required: true

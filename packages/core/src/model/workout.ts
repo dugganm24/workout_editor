@@ -1,11 +1,11 @@
 import { z } from 'zod';
 
 /**
- * Canonical workout model. This is the editor's own format — Garmin Connect
+ * Canonical workout model. This is the editor's own format, Garmin Connect
  * JSON (and any future targets like FIT) are compile targets converted to and
  * from this shape in `src/connect/`.
  *
- * `schemaVersion` gates forward migrations: any breaking change to these
+ * `schemaVersion` gates forward migrations. Any breaking change to these
  * schemas bumps the version and adds a migration so saved/shared workouts
  * never break on upgrade.
  */
