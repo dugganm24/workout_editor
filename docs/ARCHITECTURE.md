@@ -71,7 +71,7 @@ docs/          # this file, adding-a-sport.md, connect-format.md
 | ----------- | --------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Language    | TypeScript strict                 | typed workout model is the heart of the app                                                         |
 | UI          | React 19 + Vite 8                 |                                                                                                     |
-| Lint        | oxlint                            | what the Vite template ships now, faster than ESLint, zero-config                            |
+| Lint        | oxlint                            | what the Vite template ships now, faster than ESLint, zero-config                                   |
 | Format      | Prettier                          | `npm run format`                                                                                    |
 | State       | Zustand                           |                                                                                                     |
 | Persistence | IndexedDB via `idb`               |                                                                                                     |

@@ -1,6 +1,6 @@
 # Workout Editor
 
-A fast, keyboard-friendly alternative to Garmin Connect's clunky drag-and-drop workout 
+A fast, keyboard-friendly alternative to Garmin Connect's clunky drag-and-drop workout
 editor. Strength training first, other activity types are on the roadmap and open to contribution.
 
 > **Status: under construction.** The project is in early scaffolding. Follow the

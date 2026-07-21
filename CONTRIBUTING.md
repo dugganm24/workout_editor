@@ -1,6 +1,6 @@
 # Contributing to Workout Editor
 
-Thanks for helping build a better workout editor! Contributions of all sizes are welcome. 
+Thanks for helping build a better workout editor! Contributions of all sizes are welcome.
 
 ## Getting started
 
