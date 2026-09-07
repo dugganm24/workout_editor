@@ -2,7 +2,7 @@ import { SCHEMA_VERSION, type Workout } from '@workout-editor/core';
 import { getDb, UPDATED_AT_INDEX, WORKOUT_STORE, type WorkoutRecord } from './db.ts';
 import { migrateWorkout } from './migrate.ts';
 
-/** What the library list needs, without loading every workout's steps. */
+/** What the library list renders for one saved workout. */
 export interface WorkoutSummary {
   id: string;
   name: string;
@@ -30,20 +30,25 @@ function summarize(record: WorkoutRecord, workout: Workout): WorkoutSummary {
   };
 }
 
+interface ReadRecord {
+  record: WorkoutRecord;
+  workout: Workout;
+}
+
 /**
- * Every saved workout, newest first. A record that fails validation is
- * reported in `unreadable` rather than thrown: one corrupt row must not blank
- * out the whole library.
+ * One pass over the store, newest first: every record is read and validated
+ * exactly once. A record that fails validation is reported in `unreadable`
+ * rather than thrown — one corrupt row must not blank out the whole library.
  */
-export async function listWorkouts(): Promise<Library> {
+async function readAll(): Promise<{ readable: ReadRecord[]; unreadable: UnreadableWorkout[] }> {
   const db = await getDb();
   const records = await db.getAllFromIndex(WORKOUT_STORE, UPDATED_AT_INDEX);
 
-  const workouts: WorkoutSummary[] = [];
+  const readable: ReadRecord[] = [];
   const unreadable: UnreadableWorkout[] = [];
   for (const record of records) {
     try {
-      workouts.push(summarize(record, migrateWorkout(record.workout)));
+      readable.push({ record, workout: migrateWorkout(record.workout) });
     } catch (error) {
       unreadable.push({
         id: record.id,
@@ -53,8 +58,23 @@ export async function listWorkouts(): Promise<Library> {
   }
 
   // The index sorts ascending; the library shows most recently touched first.
-  workouts.sort((a, b) => b.updatedAt - a.updatedAt);
-  return { workouts, unreadable };
+  readable.reverse();
+  return { readable, unreadable };
+}
+
+/** Every saved workout, newest first, summarized for the library list. */
+export async function listWorkouts(): Promise<Library> {
+  const { readable, unreadable } = await readAll();
+  return {
+    workouts: readable.map(({ record, workout }) => summarize(record, workout)),
+    unreadable,
+  };
+}
+
+/** Every readable workout in full, newest first. Backs the whole-library backup. */
+export async function readAllWorkouts(): Promise<Workout[]> {
+  const { readable } = await readAll();
+  return readable.map(({ workout }) => workout);
 }
 
 /** Throws if the stored record is invalid — callers opening a workout need to know. */
@@ -64,10 +84,21 @@ export async function getWorkout(id: string): Promise<Workout | undefined> {
   return record ? migrateWorkout(record.workout) : undefined;
 }
 
+/**
+ * `updatedAt` orders the library, so two writes in the same millisecond must
+ * not tie — a tie leaves the order to the random UUID primary key.
+ */
+let lastWriteAt = 0;
+function nextUpdatedAt(): number {
+  const now = Date.now();
+  lastWriteAt = now > lastWriteAt ? now : lastWriteAt + 1;
+  return lastWriteAt;
+}
+
 export async function putWorkout(workout: Workout): Promise<WorkoutRecord> {
   const record: WorkoutRecord = {
     id: workout.id,
-    updatedAt: Date.now(),
+    updatedAt: nextUpdatedAt(),
     workout: migrateWorkout(workout),
   };
   const db = await getDb();

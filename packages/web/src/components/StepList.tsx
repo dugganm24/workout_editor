@@ -6,8 +6,10 @@ import type { ExerciseStep, RepeatBlock, RestStep, WorkoutStep } from '@workout-
  */
 
 function formatSeconds(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.round(seconds % 60);
+  // Round first: rounding the remainder alone turns 119.6s into "1m 60s".
+  const total = Math.round(seconds);
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
   if (!mins) return `${secs}s`;
   return secs ? `${mins}m ${secs}s` : `${mins}m`;
 }

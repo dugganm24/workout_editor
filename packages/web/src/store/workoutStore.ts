@@ -25,7 +25,6 @@ export interface WorkoutState {
   createWorkout: (name?: string) => Promise<void>;
   openWorkout: (id: string) => Promise<void>;
   closeWorkout: () => void;
-  saveWorkout: (workout: Workout) => Promise<void>;
   renameWorkout: (id: string, name: string) => Promise<void>;
   duplicateWorkout: (id: string) => Promise<void>;
   deleteWorkout: (id: string) => Promise<void>;
@@ -46,13 +45,17 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
     set({ summaries: workouts, unreadable, status: 'ready' });
   }
 
-  /** Runs a mutation, refreshes the list, and routes failures to `error`. */
+  /**
+   * Runs a mutation, refreshes the list, and routes failures to `error`.
+   * `status` is deliberately left alone: it describes the library load, and a
+   * rejected mutation (a blank name, say) must not make the list look broken.
+   */
   async function withRefresh(action: () => Promise<void>): Promise<void> {
     try {
       await action();
       await refresh();
     } catch (error) {
-      set({ error: message(error), status: 'error' });
+      set({ error: message(error) });
     }
   }
 
@@ -90,12 +93,6 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
 
     closeWorkout: () => set({ currentWorkout: null }),
 
-    saveWorkout: async (workout) =>
-      withRefresh(async () => {
-        await storage.putWorkout(workout);
-        set({ currentWorkout: workout, error: null });
-      }),
-
     renameWorkout: async (id, name) =>
       withRefresh(async () => {
         const trimmed = name.trim();
@@ -103,10 +100,11 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
         const workout = await storage.getWorkout(id);
         if (!workout) throw new Error('That workout is no longer in your library.');
         // A no-op rename must not bump updatedAt, which would reorder the library.
-        if (trimmed === workout.name) return;
-        const renamed = { ...workout, name: trimmed };
-        await storage.putWorkout(renamed);
-        if (get().currentWorkout?.id === id) set({ currentWorkout: renamed });
+        if (trimmed !== workout.name) {
+          const renamed = { ...workout, name: trimmed };
+          await storage.putWorkout(renamed);
+          if (get().currentWorkout?.id === id) set({ currentWorkout: renamed });
+        }
         set({ error: null });
       }),
 
@@ -144,13 +142,8 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
 
     exportLibrary: async () => {
       try {
-        const { workouts: summaries } = await storage.listWorkouts();
-        if (summaries.length === 0) throw new Error('There are no workouts to export.');
-        const workouts = [];
-        for (const summary of summaries) {
-          const workout = await storage.getWorkout(summary.id);
-          if (workout) workouts.push(workout);
-        }
+        const workouts = await storage.readAllWorkouts();
+        if (workouts.length === 0) throw new Error('There are no workouts to export.');
         downloadLibraryJson(workouts);
       } catch (error) {
         set({ error: message(error) });

@@ -47,14 +47,16 @@ export function serializeLibrary(workouts: Workout[]): string {
 function download(contents: string, fileName: string): void {
   const blob = new Blob([contents], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = fileName;
-    anchor.click();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.style.display = 'none';
+  // Firefox only downloads from an anchor that is in the document, and revoking
+  // the URL in the same tick cancels the download the click just started.
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
 /** Triggers a browser download of one workout as canonical JSON. */

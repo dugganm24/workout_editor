@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SCHEMA_VERSION, type Workout } from '@workout-editor/core';
 import { closeDb, getDb, WORKOUT_STORE } from './db.ts';
 import { UnsupportedSchemaVersionError } from './migrate.ts';
@@ -68,6 +68,20 @@ describe('workout storage', () => {
     expect(workouts.map((w) => w.name)).toEqual(['Newer', 'Older']);
     expect(workouts[0]?.stepCount).toBe(0);
     expect(workouts[1]?.stepCount).toBe(1);
+  });
+
+  it('keeps creation order for writes inside the same millisecond', async () => {
+    // A shared updatedAt would leave the order to the random UUID primary key.
+    const now = vi.spyOn(Date, 'now').mockReturnValue(5_000);
+    try {
+      for (const name of ['First', 'Second', 'Third']) await createWorkout(name);
+    } finally {
+      now.mockRestore();
+    }
+
+    const { workouts } = await listWorkouts();
+    expect(workouts.map((w) => w.name)).toEqual(['Third', 'Second', 'First']);
+    expect(new Set(workouts.map((w) => w.updatedAt)).size).toBe(3);
   });
 
   it('duplicates under a new id without touching the original', async () => {

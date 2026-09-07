@@ -9,6 +9,11 @@ describe('StepList', () => {
     expect(screen.getByText('No steps yet.')).toBeInTheDocument();
   });
 
+  it('rounds a fractional duration without rolling over to "1m 60s"', () => {
+    render(<StepList steps={[{ kind: 'rest', duration: { type: 'time', seconds: 119.6 } }]} />);
+    expect(screen.getByText('2m')).toBeInTheDocument();
+  });
+
   it('renders exercise, rest, and nested repeat blocks', () => {
     const steps: WorkoutStep[] = [
       {
