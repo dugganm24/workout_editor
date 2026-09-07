@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ExportableWorkoutSchema, SCHEMA_VERSION, WorkoutSchema } from './workout.js';
+import {
+  countLeafSteps,
+  ExportableWorkoutSchema,
+  SCHEMA_VERSION,
+  WorkoutSchema,
+} from './workout.js';
 
 const validWorkout = {
   schemaVersion: SCHEMA_VERSION,
@@ -74,5 +79,31 @@ describe('ExportableWorkoutSchema', () => {
   it('still applies every WorkoutSchema rule', () => {
     const bad = { ...validWorkout, steps: [{ kind: 'repeat', rounds: 3, steps: [] }] };
     expect(ExportableWorkoutSchema.safeParse(bad).success).toBe(false);
+  });
+});
+
+describe('countLeafSteps', () => {
+  it('counts leaves, recursing into repeat blocks without multiplying rounds', () => {
+    expect(
+      countLeafSteps([
+        {
+          kind: 'repeat',
+          rounds: 4,
+          steps: [
+            { kind: 'exercise', category: 'SQUAT', duration: { type: 'reps', reps: 5 } },
+            {
+              kind: 'repeat',
+              rounds: 2,
+              steps: [{ kind: 'rest', duration: { type: 'time', seconds: 60 } }],
+            },
+          ],
+        },
+        { kind: 'rest', duration: { type: 'time', seconds: 120 } },
+      ]),
+    ).toBe(3);
+  });
+
+  it('counts an empty draft as zero', () => {
+    expect(countLeafSteps([])).toBe(0);
   });
 });

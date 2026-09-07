@@ -92,3 +92,20 @@ export interface RepeatBlock {
 export type WorkoutStep = ExerciseStep | RestStep | RepeatBlock;
 export type Workout = z.infer<typeof WorkoutSchema>;
 export type ExportableWorkout = z.infer<typeof ExportableWorkoutSchema>;
+
+/**
+ * Leaf steps in a step tree, recursing into repeat blocks: a workout built as
+ * one block of six exercises is six steps, not one. Rounds are deliberately not
+ * multiplied in — the count says what the workout *contains*, so editing a
+ * round count does not swing it.
+ *
+ * Lives beside the schema that defines the tree so every consumer that needs to
+ * walk it — the library summary, a future duration estimate, the `src/connect/`
+ * converters — shares one definition of "descend into repeat, else leaf".
+ */
+export function countLeafSteps(steps: WorkoutStep[]): number {
+  return steps.reduce(
+    (total, step) => total + (step.kind === 'repeat' ? countLeafSteps(step.steps) : 1),
+    0,
+  );
+}

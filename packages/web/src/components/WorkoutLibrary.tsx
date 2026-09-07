@@ -37,15 +37,11 @@ export default function WorkoutLibrary() {
     void loadLibrary();
   }, [loadLibrary]);
 
-  // The list reorders on every refresh, so an armed "Confirm delete" would end
-  // up over a different row. Disarm whenever the list changes.
-  useEffect(() => setPendingDelete(null), [summaries]);
-
   async function handleImport(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     // Reset first so re-picking the same file fires another change event.
     event.target.value = '';
-    if (file) await importWorkoutFile(await file.text());
+    if (file) await importWorkoutFile(() => file.text());
   }
 
   return (

@@ -1,22 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb } from '../storage/testing.ts';
+import { resetApp } from '../testing.ts';
 import { serializeLibrary, serializeWorkout } from '../storage/files.ts';
 import { newWorkout } from '../storage/workouts.ts';
 import { useWorkoutStore } from './workoutStore.ts';
 
 const store = () => useWorkoutStore.getState();
 
+/** The store reads a file through a thunk; tests hand it the text directly. */
+const asFile = (text: string) => () => Promise.resolve(text);
+
 describe('workout store', () => {
-  beforeEach(async () => {
-    await resetDb();
-    useWorkoutStore.setState({
-      summaries: [],
-      unreadable: [],
-      currentWorkout: null,
-      status: 'idle',
-      error: null,
-    });
-  });
+  beforeEach(resetApp);
 
   it('creates a workout, opens it, and lists it', async () => {
     await store().createWorkout('Push Day');
@@ -96,7 +90,7 @@ describe('workout store', () => {
   });
 
   it('imports a backup file into the library', async () => {
-    await store().importWorkoutFile(serializeWorkout(newWorkout('Imported')));
+    await store().importWorkoutFile(asFile(serializeWorkout(newWorkout('Imported'))));
 
     expect(store().summaries.map((s) => s.name)).toEqual(['Imported']);
     expect(store().error).toBeNull();
@@ -104,7 +98,7 @@ describe('workout store', () => {
 
   it('imports a whole-library bundle', async () => {
     await store().importWorkoutFile(
-      serializeLibrary([newWorkout('Push Day'), newWorkout('Pull Day')]),
+      asFile(serializeLibrary([newWorkout('Push Day'), newWorkout('Pull Day')])),
     );
 
     expect(
@@ -118,7 +112,7 @@ describe('workout store', () => {
     const bundle = JSON.parse(serializeLibrary([newWorkout('Good')])) as { workouts: unknown[] };
     bundle.workouts.push({ nope: true });
 
-    await store().importWorkoutFile(JSON.stringify(bundle));
+    await store().importWorkoutFile(asFile(JSON.stringify(bundle)));
 
     expect(store().error).toBeTruthy();
     expect(store().summaries).toEqual([]);
@@ -130,9 +124,18 @@ describe('workout store', () => {
   });
 
   it('surfaces an import error without touching the library', async () => {
-    await store().importWorkoutFile('not json at all');
+    await store().importWorkoutFile(asFile('not json at all'));
 
     expect(store().error).toMatch(/JSON/);
+    expect(store().summaries).toEqual([]);
+  });
+
+  it('reports a file it could not read instead of failing silently', async () => {
+    await store().importWorkoutFile(() =>
+      Promise.reject(new DOMException('permission denied', 'NotReadableError')),
+    );
+
+    expect(store().error).toMatch(/could not be read/);
     expect(store().summaries).toEqual([]);
   });
 

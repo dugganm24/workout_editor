@@ -18,13 +18,12 @@ export default function WorkoutPreview({ workout }: { workout: Workout }) {
   // Re-sync when a different workout is opened, or the name changes elsewhere.
   useEffect(() => setName(workout.name), [workout.id, workout.name]);
 
-  function commitName() {
-    const trimmed = name.trim();
-    if (!trimmed || trimmed === workout.name) {
-      setName(workout.name);
-      return;
-    }
-    void renameWorkout(workout.id, trimmed);
+  async function commitName() {
+    // The store owns the naming rules — trimming, rejecting a blank name, and
+    // skipping a no-op. Pre-checking here is how this view and the library
+    // drifted into disagreeing about what a blank name does.
+    await renameWorkout(workout.id, name);
+    setName(useWorkoutStore.getState().currentWorkout?.name ?? name);
   }
 
   return (
@@ -46,7 +45,7 @@ export default function WorkoutPreview({ workout }: { workout: Workout }) {
             className="w-full rounded-md border border-transparent px-2 py-1 text-2xl font-semibold tracking-tight hover:border-gray-300 focus:border-gray-400 focus:outline-none"
             value={name}
             onChange={(event) => setName(event.target.value)}
-            onBlur={commitName}
+            onBlur={() => void commitName()}
             onKeyDown={(event) => {
               if (event.key === 'Enter') event.currentTarget.blur();
               if (event.key === 'Escape') setName(workout.name);

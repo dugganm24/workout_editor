@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { openDB } from 'idb';
 import { SCHEMA_VERSION, type Workout } from '@workout-editor/core';
-import { closeDb, getDb, WORKOUT_STORE } from './db.ts';
+import { closeDb, DB_NAME, getDb, UPDATED_AT_INDEX, WORKOUT_STORE } from './db.ts';
 import { UnsupportedSchemaVersionError } from './migrate.ts';
 import { resetDb } from './testing.ts';
 import {
@@ -34,10 +35,11 @@ function workoutWithSteps(name: string): Workout {
   };
 }
 
-/** Writes a record straight to the store, bypassing validation. */
-async function putRaw(id: string, workout: unknown, updatedAt = Date.now()): Promise<void> {
+/** Writes a record straight to the store, bypassing validation. `seq` orders it. */
+let rawSeq = 0;
+async function putRaw(id: string, workout: unknown, seq = ++rawSeq): Promise<void> {
   const db = await getDb();
-  await db.put(WORKOUT_STORE, { id, updatedAt, workout } as never);
+  await db.put(WORKOUT_STORE, { id, seq, updatedAt: Date.now(), workout } as never);
 }
 
 describe('workout storage', () => {
@@ -61,8 +63,8 @@ describe('workout storage', () => {
   });
 
   it('lists workouts newest first with step counts', async () => {
-    await putRaw('older', workoutWithSteps('Older'), 1_000);
-    await putRaw('newer', newWorkout('Newer'), 2_000);
+    await putRaw('older', workoutWithSteps('Older'), 1);
+    await putRaw('newer', newWorkout('Newer'), 2);
 
     const { workouts } = await listWorkouts();
     expect(workouts.map((w) => w.name)).toEqual(['Newer', 'Older']);
@@ -88,14 +90,15 @@ describe('workout storage', () => {
       },
       { kind: 'rest', duration: { type: 'time', seconds: 120 } },
     ];
-    await putRaw('nested', nested, 3_000);
+    await putRaw('nested', nested, 1);
 
     const { workouts } = await listWorkouts();
     expect(workouts[0]?.stepCount).toBe(3);
   });
 
   it('keeps creation order for writes inside the same millisecond', async () => {
-    // A shared updatedAt would leave the order to the random UUID primary key.
+    // Ordering comes from `seq`, so a shared timestamp cannot leave the order
+    // to the random UUID primary key.
     const now = vi.spyOn(Date, 'now').mockReturnValue(5_000);
     try {
       for (const name of ['First', 'Second', 'Third']) await createWorkout(name);
@@ -105,7 +108,28 @@ describe('workout storage', () => {
 
     const { workouts } = await listWorkouts();
     expect(workouts.map((w) => w.name)).toEqual(['Third', 'Second', 'First']);
-    expect(new Set(workouts.map((w) => w.updatedAt)).size).toBe(3);
+    // ...and no timestamp had to be nudged past the wall clock to achieve it.
+    expect(workouts.map((w) => w.updatedAt)).toEqual([5_000, 5_000, 5_000]);
+  });
+
+  it('orders by the database, not module state, across a reload', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(5_000);
+    try {
+      vi.resetModules();
+      let storage = await import('./workouts.ts');
+      for (const name of ['First', 'Second', 'Third']) await storage.createWorkout(name);
+
+      // A reload gets fresh module state while the wall clock has barely moved.
+      clock.mockReturnValue(5_001);
+      vi.resetModules();
+      storage = await import('./workouts.ts');
+      await storage.createWorkout('After reload');
+
+      const { workouts } = await storage.listWorkouts();
+      expect(workouts.map((w) => w.name)).toEqual(['After reload', 'Third', 'Second', 'First']);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('duplicates under a new id without touching the original', async () => {
@@ -143,6 +167,32 @@ describe('workout storage', () => {
     const { workouts, unreadable } = await listWorkouts();
     expect(workouts.map((w) => w.name)).toEqual(['Good']);
     expect(unreadable.map((u) => u.id)).toEqual(['bad']);
+  });
+
+  it('backfills write order for a database saved before seq existed', async () => {
+    // Rebuild the v1 shape by hand: records with no `seq`, ordered by updatedAt.
+    const v1 = await openDB(DB_NAME, 1, {
+      upgrade(db) {
+        const store = db.createObjectStore(WORKOUT_STORE, { keyPath: 'id' });
+        store.createIndex(UPDATED_AT_INDEX, 'updatedAt');
+      },
+    });
+    await v1.put(WORKOUT_STORE, { id: 'a', updatedAt: 1_000, workout: newWorkout('Older') });
+    await v1.put(WORKOUT_STORE, { id: 'b', updatedAt: 2_000, workout: newWorkout('Newer') });
+    v1.close();
+
+    // Opening at v2 must keep both rows and their order, not hide the ones the
+    // new index cannot see.
+    const { workouts } = await listWorkouts();
+    expect(workouts.map((w) => w.name)).toEqual(['Newer', 'Older']);
+
+    // ...and a write after the upgrade still lands on top.
+    await createWorkout('Newest');
+    expect((await listWorkouts()).workouts.map((w) => w.name)).toEqual([
+      'Newest',
+      'Newer',
+      'Older',
+    ]);
   });
 
   it('rejects a workout saved by a newer schema version', async () => {

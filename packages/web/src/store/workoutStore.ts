@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Workout } from '@workout-editor/core';
+import { errorMessage } from '../errors.ts';
 import { downloadLibraryJson, downloadWorkoutJson, parseWorkoutsFile } from '../storage/files.ts';
 import * as storage from '../storage/workouts.ts';
 import type { UnreadableWorkout, WorkoutSummary } from '../storage/workouts.ts';
@@ -28,14 +29,11 @@ export interface WorkoutState {
   renameWorkout: (id: string, name: string) => Promise<void>;
   duplicateWorkout: (id: string) => Promise<void>;
   deleteWorkout: (id: string) => Promise<void>;
-  importWorkoutFile: (text: string) => Promise<void>;
+  /** Takes a reader rather than text so a failed read reports like any other import error. */
+  importWorkoutFile: (readFile: () => Promise<string>) => Promise<void>;
   exportWorkout: (id: string) => Promise<void>;
   exportLibrary: () => Promise<void>;
   clearError: () => void;
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export const useWorkoutStore = create<WorkoutState>((set, get) => {
@@ -55,7 +53,7 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
       await action();
       await refresh();
     } catch (error) {
-      set({ error: message(error) });
+      set({ error: errorMessage(error) });
     }
   }
 
@@ -71,7 +69,7 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
       try {
         await refresh();
       } catch (error) {
-        set({ error: message(error), status: 'error' });
+        set({ error: errorMessage(error), status: 'error' });
       }
     },
 
@@ -87,7 +85,7 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
         if (!workout) throw new Error('That workout is no longer in your library.');
         set({ currentWorkout: workout, error: null });
       } catch (error) {
-        set({ error: message(error) });
+        set({ error: errorMessage(error) });
       }
     },
 
@@ -121,8 +119,14 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
         set({ error: null });
       }),
 
-    importWorkoutFile: async (text) =>
+    importWorkoutFile: async (readFile) =>
       withRefresh(async () => {
+        // Reading happens in here so a file that vanishes or turns unreadable
+        // between the picker and the read surfaces like every other import
+        // failure, instead of rejecting into nothing.
+        const text = await readFile().catch((error: unknown) => {
+          throw new Error('That file could not be read.', { cause: error });
+        });
         // Parse the whole file before writing anything, so a bad entry cannot
         // leave the library half-imported.
         const workouts = parseWorkoutsFile(text);
@@ -136,7 +140,7 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
         if (!workout) throw new Error('That workout is no longer in your library.');
         downloadWorkoutJson(workout);
       } catch (error) {
-        set({ error: message(error) });
+        set({ error: errorMessage(error) });
       }
     },
 
@@ -146,7 +150,7 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
         if (workouts.length === 0) throw new Error('There are no workouts to export.');
         downloadLibraryJson(workouts);
       } catch (error) {
-        set({ error: message(error) });
+        set({ error: errorMessage(error) });
       }
     },
 

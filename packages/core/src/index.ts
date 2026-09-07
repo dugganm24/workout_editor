@@ -1,5 +1,6 @@
 export {
   SCHEMA_VERSION,
+  countLeafSteps,
   WorkoutSchema,
   ExportableWorkoutSchema,
   WorkoutStepSchema,

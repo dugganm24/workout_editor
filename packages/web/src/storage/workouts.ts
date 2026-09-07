@@ -1,12 +1,13 @@
-import { SCHEMA_VERSION, type Workout, type WorkoutStep } from '@workout-editor/core';
-import { getDb, UPDATED_AT_INDEX, WORKOUT_STORE, type WorkoutRecord } from './db.ts';
+import { countLeafSteps, SCHEMA_VERSION, type Workout } from '@workout-editor/core';
+import { errorMessage } from '../errors.ts';
+import { getDb, SEQ_INDEX, WORKOUT_STORE, type WorkoutRecord } from './db.ts';
 import { migrateWorkout } from './migrate.ts';
 
 /** What the library list renders for one saved workout. */
 export interface WorkoutSummary {
   id: string;
   name: string;
-  /** See countSteps: leaf steps, not top-level entries. */
+  /** See countLeafSteps: leaf steps, not top-level entries. */
   stepCount: number;
   updatedAt: number;
 }
@@ -22,24 +23,11 @@ export interface Library {
   unreadable: UnreadableWorkout[];
 }
 
-/**
- * Leaf steps, recursing into repeat blocks: a workout built as one block of
- * six exercises is six steps, not one. Rounds are deliberately not multiplied
- * in — the count says what the workout contains, so editing the round count
- * does not swing the number the library shows.
- */
-function countSteps(steps: WorkoutStep[]): number {
-  return steps.reduce(
-    (total, step) => total + (step.kind === 'repeat' ? countSteps(step.steps) : 1),
-    0,
-  );
-}
-
 function summarize(record: WorkoutRecord, workout: Workout): WorkoutSummary {
   return {
     id: record.id,
     name: workout.name,
-    stepCount: countSteps(workout.steps),
+    stepCount: countLeafSteps(workout.steps),
     updatedAt: record.updatedAt,
   };
 }
@@ -56,7 +44,7 @@ interface ReadRecord {
  */
 async function readAll(): Promise<{ readable: ReadRecord[]; unreadable: UnreadableWorkout[] }> {
   const db = await getDb();
-  const records = await db.getAllFromIndex(WORKOUT_STORE, UPDATED_AT_INDEX);
+  const records = await db.getAllFromIndex(WORKOUT_STORE, SEQ_INDEX);
 
   const readable: ReadRecord[] = [];
   const unreadable: UnreadableWorkout[] = [];
@@ -66,12 +54,12 @@ async function readAll(): Promise<{ readable: ReadRecord[]; unreadable: Unreadab
     } catch (error) {
       unreadable.push({
         id: record.id,
-        reason: error instanceof Error ? error.message : String(error),
+        reason: errorMessage(error),
       });
     }
   }
 
-  // The index sorts ascending; the library shows most recently touched first.
+  // The index sorts by ascending write order; the library shows newest first.
   readable.reverse();
   return { readable, unreadable };
 }
@@ -99,24 +87,28 @@ export async function getWorkout(id: string): Promise<Workout | undefined> {
 }
 
 /**
- * `updatedAt` orders the library, so two writes in the same millisecond must
- * not tie — a tie leaves the order to the random UUID primary key.
+ * Writes get their `seq` from the store's own highest, inside the same
+ * transaction as the write. Ordering therefore survives a reload and stays
+ * consistent across tabs — neither of which a module-level counter could
+ * manage — and `updatedAt` stays the true wall-clock time rather than being
+ * nudged forward to break ties.
  */
-let lastWriteAt = 0;
-function nextUpdatedAt(): number {
-  const now = Date.now();
-  lastWriteAt = now > lastWriteAt ? now : lastWriteAt + 1;
-  return lastWriteAt;
-}
-
 export async function putWorkout(workout: Workout): Promise<WorkoutRecord> {
+  // Validate before opening the transaction: a throw mid-transaction would
+  // leave it to abort on its own.
+  const migrated = migrateWorkout(workout);
+
+  const db = await getDb();
+  const tx = db.transaction(WORKOUT_STORE, 'readwrite');
+  const newest = await tx.store.index(SEQ_INDEX).openCursor(null, 'prev');
   const record: WorkoutRecord = {
     id: workout.id,
-    updatedAt: nextUpdatedAt(),
-    workout: migrateWorkout(workout),
+    seq: (newest?.value.seq ?? 0) + 1,
+    updatedAt: Date.now(),
+    workout: migrated,
   };
-  const db = await getDb();
-  await db.put(WORKOUT_STORE, record);
+  await tx.store.put(record);
+  await tx.done;
   return record;
 }
 
