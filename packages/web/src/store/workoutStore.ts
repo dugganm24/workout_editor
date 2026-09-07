@@ -102,6 +102,8 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
         if (!trimmed) throw new Error('A workout needs a name.');
         const workout = await storage.getWorkout(id);
         if (!workout) throw new Error('That workout is no longer in your library.');
+        // A no-op rename must not bump updatedAt, which would reorder the library.
+        if (trimmed === workout.name) return;
         const renamed = { ...workout, name: trimmed };
         await storage.putWorkout(renamed);
         if (get().currentWorkout?.id === id) set({ currentWorkout: renamed });

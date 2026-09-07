@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb } from '../storage/testing.ts';
 import { serializeLibrary, serializeWorkout } from '../storage/files.ts';
 import { newWorkout } from '../storage/workouts.ts';
@@ -34,6 +34,31 @@ describe('workout store', () => {
 
     expect(store().currentWorkout?.name).toBe('Pull Day');
     expect(store().summaries[0]?.name).toBe('Pull Day');
+  });
+
+  it('does not reorder the library when a rename changes nothing', async () => {
+    // Pin the clock: two creates in the same millisecond would tie on updatedAt.
+    const now = vi.spyOn(Date, 'now');
+    try {
+      now.mockReturnValue(1_000);
+      await store().createWorkout('Older');
+      const older = store().currentWorkout!.id;
+
+      now.mockReturnValue(2_000);
+      await store().createWorkout('Newer');
+      expect(store().summaries.map((s) => s.name)).toEqual(['Newer', 'Older']);
+
+      // Opening the rename field and confirming without editing must be inert.
+      now.mockReturnValue(3_000);
+      await store().renameWorkout(older, 'Older');
+      expect(store().summaries.map((s) => s.name)).toEqual(['Newer', 'Older']);
+
+      // A real rename does move it to the top.
+      await store().renameWorkout(older, 'Renamed');
+      expect(store().summaries.map((s) => s.name)).toEqual(['Renamed', 'Newer']);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it('refuses a blank name', async () => {
