@@ -67,7 +67,31 @@ describe('workout storage', () => {
     const { workouts } = await listWorkouts();
     expect(workouts.map((w) => w.name)).toEqual(['Newer', 'Older']);
     expect(workouts[0]?.stepCount).toBe(0);
-    expect(workouts[1]?.stepCount).toBe(1);
+    // One repeat block holding an exercise and a rest: two steps, not one.
+    expect(workouts[1]?.stepCount).toBe(2);
+  });
+
+  it('counts steps inside nested repeat blocks without multiplying rounds', async () => {
+    const nested = newWorkout('Nested');
+    nested.steps = [
+      {
+        kind: 'repeat',
+        rounds: 4,
+        steps: [
+          { kind: 'exercise', category: 'SQUAT', duration: { type: 'reps', reps: 5 } },
+          {
+            kind: 'repeat',
+            rounds: 2,
+            steps: [{ kind: 'rest', duration: { type: 'time', seconds: 60 } }],
+          },
+        ],
+      },
+      { kind: 'rest', duration: { type: 'time', seconds: 120 } },
+    ];
+    await putRaw('nested', nested, 3_000);
+
+    const { workouts } = await listWorkouts();
+    expect(workouts[0]?.stepCount).toBe(3);
   });
 
   it('keeps creation order for writes inside the same millisecond', async () => {

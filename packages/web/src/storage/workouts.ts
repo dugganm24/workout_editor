@@ -1,4 +1,4 @@
-import { SCHEMA_VERSION, type Workout } from '@workout-editor/core';
+import { SCHEMA_VERSION, type Workout, type WorkoutStep } from '@workout-editor/core';
 import { getDb, UPDATED_AT_INDEX, WORKOUT_STORE, type WorkoutRecord } from './db.ts';
 import { migrateWorkout } from './migrate.ts';
 
@@ -6,6 +6,7 @@ import { migrateWorkout } from './migrate.ts';
 export interface WorkoutSummary {
   id: string;
   name: string;
+  /** See countSteps: leaf steps, not top-level entries. */
   stepCount: number;
   updatedAt: number;
 }
@@ -21,11 +22,24 @@ export interface Library {
   unreadable: UnreadableWorkout[];
 }
 
+/**
+ * Leaf steps, recursing into repeat blocks: a workout built as one block of
+ * six exercises is six steps, not one. Rounds are deliberately not multiplied
+ * in — the count says what the workout contains, so editing the round count
+ * does not swing the number the library shows.
+ */
+function countSteps(steps: WorkoutStep[]): number {
+  return steps.reduce(
+    (total, step) => total + (step.kind === 'repeat' ? countSteps(step.steps) : 1),
+    0,
+  );
+}
+
 function summarize(record: WorkoutRecord, workout: Workout): WorkoutSummary {
   return {
     id: record.id,
     name: workout.name,
-    stepCount: workout.steps.length,
+    stepCount: countSteps(workout.steps),
     updatedAt: record.updatedAt,
   };
 }
