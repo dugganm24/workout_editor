@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb } from '../storage/testing.ts';
-import { serializeWorkout } from '../storage/files.ts';
+import { serializeLibrary, serializeWorkout } from '../storage/files.ts';
 import { newWorkout } from '../storage/workouts.ts';
 import { useWorkoutStore } from './workoutStore.ts';
 
@@ -75,6 +75,33 @@ describe('workout store', () => {
 
     expect(store().summaries.map((s) => s.name)).toEqual(['Imported']);
     expect(store().error).toBeNull();
+  });
+
+  it('imports a whole-library bundle', async () => {
+    await store().importWorkoutFile(
+      serializeLibrary([newWorkout('Push Day'), newWorkout('Pull Day')]),
+    );
+
+    expect(
+      store()
+        .summaries.map((s) => s.name)
+        .sort(),
+    ).toEqual(['Pull Day', 'Push Day']);
+  });
+
+  it('leaves the library untouched when one entry in a bundle is bad', async () => {
+    const bundle = JSON.parse(serializeLibrary([newWorkout('Good')])) as { workouts: unknown[] };
+    bundle.workouts.push({ nope: true });
+
+    await store().importWorkoutFile(JSON.stringify(bundle));
+
+    expect(store().error).toBeTruthy();
+    expect(store().summaries).toEqual([]);
+  });
+
+  it('refuses to export an empty library', async () => {
+    await store().exportLibrary();
+    expect(store().error).toMatch(/no workouts to export/);
   });
 
   it('surfaces an import error without touching the library', async () => {

@@ -19,9 +19,19 @@ export default function WorkoutLibrary() {
   const deleteWorkout = useWorkoutStore((s) => s.deleteWorkout);
   const exportWorkout = useWorkoutStore((s) => s.exportWorkout);
   const importWorkoutFile = useWorkoutStore((s) => s.importWorkoutFile);
+  const exportLibrary = useWorkoutStore((s) => s.exportLibrary);
+  const renameWorkout = useWorkoutStore((s) => s.renameWorkout);
 
   const fileInput = useRef<HTMLInputElement>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+
+  async function commitRename() {
+    if (!renaming) return;
+    const { id, name } = renaming;
+    setRenaming(null);
+    await renameWorkout(id, name);
+  }
 
   useEffect(() => {
     void loadLibrary();
@@ -39,6 +49,14 @@ export default function WorkoutLibrary() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-2xl font-semibold tracking-tight">Your workouts</h2>
         <div className="flex gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-40"
+            disabled={summaries.length === 0}
+            onClick={() => void exportLibrary()}
+          >
+            Export all
+          </button>
           <button
             type="button"
             className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
@@ -90,13 +108,28 @@ export default function WorkoutLibrary() {
               className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-gray-200 px-4 py-3"
             >
               <div>
-                <button
-                  type="button"
-                  className="font-medium text-gray-900 underline-offset-2 hover:underline"
-                  onClick={() => void openWorkout(summary.id)}
-                >
-                  {summary.name}
-                </button>
+                {renaming?.id === summary.id ? (
+                  <input
+                    autoFocus
+                    aria-label={`Rename ${summary.name}`}
+                    className="rounded-md border border-gray-400 px-2 py-1 font-medium focus:outline-none"
+                    value={renaming.name}
+                    onChange={(event) => setRenaming({ id: summary.id, name: event.target.value })}
+                    onBlur={() => void commitRename()}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') event.currentTarget.blur();
+                      if (event.key === 'Escape') setRenaming(null);
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="font-medium text-gray-900 underline-offset-2 hover:underline"
+                    onClick={() => void openWorkout(summary.id)}
+                  >
+                    {summary.name}
+                  </button>
+                )}
                 <p className="text-sm text-gray-500">
                   {summary.stepCount} step{summary.stepCount === 1 ? '' : 's'} · updated{' '}
                   {formatUpdatedAt(summary.updatedAt)}
@@ -104,6 +137,13 @@ export default function WorkoutLibrary() {
               </div>
 
               <div className="flex items-center gap-2 text-sm">
+                <button
+                  type="button"
+                  className="rounded-md border border-gray-300 px-2.5 py-1 hover:bg-gray-50"
+                  onClick={() => setRenaming({ id: summary.id, name: summary.name })}
+                >
+                  Rename
+                </button>
                 <button
                   type="button"
                   className="rounded-md border border-gray-300 px-2.5 py-1 hover:bg-gray-50"

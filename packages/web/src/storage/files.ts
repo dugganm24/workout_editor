@@ -1,4 +1,4 @@
-import type { Workout } from '@workout-editor/core';
+import { SCHEMA_VERSION, type Workout } from '@workout-editor/core';
 import { InvalidWorkoutError, migrateWorkout } from './migrate.ts';
 import { copyWorkout } from './workouts.ts';
 
@@ -9,6 +9,17 @@ import { copyWorkout } from './workouts.ts';
  */
 
 const FILE_EXTENSION = '.workout.json';
+const LIBRARY_FILE = 'workout-editor-library.json';
+
+/** Envelope for a whole-library backup, so a bundle is distinguishable from one workout. */
+const LIBRARY_KIND = 'workout-editor-library';
+
+interface LibraryFile {
+  kind: typeof LIBRARY_KIND;
+  schemaVersion: number;
+  exportedAt: string;
+  workouts: unknown[];
+}
 
 export function workoutFileName(workout: Workout): string {
   const slug = workout.name
@@ -23,32 +34,69 @@ export function serializeWorkout(workout: Workout): string {
   return `${JSON.stringify(workout, null, 2)}\n`;
 }
 
-/** Triggers a browser download of the workout as canonical JSON. */
-export function downloadWorkoutJson(workout: Workout): void {
-  const blob = new Blob([serializeWorkout(workout)], { type: 'application/json' });
+export function serializeLibrary(workouts: Workout[]): string {
+  const file: LibraryFile = {
+    kind: LIBRARY_KIND,
+    schemaVersion: SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    workouts,
+  };
+  return `${JSON.stringify(file, null, 2)}\n`;
+}
+
+function download(contents: string, fileName: string): void {
+  const blob = new Blob([contents], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   try {
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = workoutFileName(workout);
+    anchor.download = fileName;
     anchor.click();
   } finally {
     URL.revokeObjectURL(url);
   }
 }
 
+/** Triggers a browser download of one workout as canonical JSON. */
+export function downloadWorkoutJson(workout: Workout): void {
+  download(serializeWorkout(workout), workoutFileName(workout));
+}
+
+/** Triggers a browser download of the whole library as a single backup file. */
+export function downloadLibraryJson(workouts: Workout[]): void {
+  download(serializeLibrary(workouts), LIBRARY_FILE);
+}
+
+function isLibraryFile(raw: unknown): raw is { workouts: unknown[] } {
+  return (
+    typeof raw === 'object' &&
+    raw !== null &&
+    (raw as { kind?: unknown }).kind === LIBRARY_KIND &&
+    Array.isArray((raw as { workouts?: unknown }).workouts)
+  );
+}
+
 /**
- * Parses a canonical backup file. The result gets a fresh id so importing the
- * same file twice yields two workouts instead of silently overwriting one.
+ * Parses a canonical backup file, accepting either a single workout or a
+ * whole-library bundle. Results get fresh ids, so importing the same file twice
+ * yields new workouts instead of silently overwriting existing ones.
  */
-export function parseWorkoutFile(text: string): Workout {
+export function parseWorkoutsFile(text: string): Workout[] {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch (error) {
     throw new InvalidWorkoutError("That file isn't valid JSON.", { cause: error });
   }
-  const workout = migrateWorkout(raw);
-  // Keep the file's name; only the id is fresh.
-  return copyWorkout(workout, workout.name);
+
+  const entries = isLibraryFile(raw) ? raw.workouts : [raw];
+  if (entries.length === 0) {
+    throw new InvalidWorkoutError('That backup file contains no workouts.');
+  }
+
+  // Keep each file's name; only the id is fresh.
+  return entries.map((entry) => {
+    const workout = migrateWorkout(entry);
+    return copyWorkout(workout, workout.name);
+  });
 }

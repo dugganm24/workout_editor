@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Workout } from '@workout-editor/core';
-import { downloadWorkoutJson, parseWorkoutFile } from '../storage/files.ts';
+import { downloadLibraryJson, downloadWorkoutJson, parseWorkoutsFile } from '../storage/files.ts';
 import * as storage from '../storage/workouts.ts';
 import type { UnreadableWorkout, WorkoutSummary } from '../storage/workouts.ts';
 
@@ -31,6 +31,7 @@ export interface WorkoutState {
   deleteWorkout: (id: string) => Promise<void>;
   importWorkoutFile: (text: string) => Promise<void>;
   exportWorkout: (id: string) => Promise<void>;
+  exportLibrary: () => Promise<void>;
   clearError: () => void;
 }
 
@@ -122,8 +123,10 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
 
     importWorkoutFile: async (text) =>
       withRefresh(async () => {
-        const workout = parseWorkoutFile(text);
-        await storage.putWorkout(workout);
+        // Parse the whole file before writing anything, so a bad entry cannot
+        // leave the library half-imported.
+        const workouts = parseWorkoutsFile(text);
+        for (const workout of workouts) await storage.putWorkout(workout);
         set({ error: null });
       }),
 
@@ -132,6 +135,21 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
         const workout = await storage.getWorkout(id);
         if (!workout) throw new Error('That workout is no longer in your library.');
         downloadWorkoutJson(workout);
+      } catch (error) {
+        set({ error: message(error) });
+      }
+    },
+
+    exportLibrary: async () => {
+      try {
+        const { workouts: summaries } = await storage.listWorkouts();
+        if (summaries.length === 0) throw new Error('There are no workouts to export.');
+        const workouts = [];
+        for (const summary of summaries) {
+          const workout = await storage.getWorkout(summary.id);
+          if (workout) workouts.push(workout);
+        }
+        downloadLibraryJson(workouts);
       } catch (error) {
         set({ error: message(error) });
       }

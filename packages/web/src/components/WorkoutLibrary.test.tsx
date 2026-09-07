@@ -54,6 +54,37 @@ describe('WorkoutLibrary', () => {
     await waitFor(() => expect(useWorkoutStore.getState().summaries).toEqual([]));
   });
 
+  it('renames a workout from the library view', async () => {
+    const user = userEvent.setup();
+    await useWorkoutStore.getState().createWorkout('Push Day');
+    render(<WorkoutLibrary />);
+
+    await user.click(await screen.findByRole('button', { name: 'Rename' }));
+    const input = screen.getByRole('textbox', { name: 'Rename Push Day' });
+    await user.clear(input);
+    await user.type(input, 'Pull Day{Enter}');
+
+    await waitFor(() => expect(useWorkoutStore.getState().summaries[0]?.name).toBe('Pull Day'));
+    expect(await screen.findByRole('button', { name: 'Pull Day' })).toBeInTheDocument();
+  });
+
+  it('abandons a rename on Escape', async () => {
+    const user = userEvent.setup();
+    await useWorkoutStore.getState().createWorkout('Push Day');
+    render(<WorkoutLibrary />);
+
+    await user.click(await screen.findByRole('button', { name: 'Rename' }));
+    await user.type(screen.getByRole('textbox', { name: 'Rename Push Day' }), 'X{Escape}');
+
+    expect(await screen.findByRole('button', { name: 'Push Day' })).toBeInTheDocument();
+    expect(useWorkoutStore.getState().summaries[0]?.name).toBe('Push Day');
+  });
+
+  it('disables Export all until there is something to export', async () => {
+    render(<WorkoutLibrary />);
+    expect(await screen.findByRole('button', { name: 'Export all' })).toBeDisabled();
+  });
+
   it('duplicates a workout from the list', async () => {
     const user = userEvent.setup();
     await useWorkoutStore.getState().createWorkout('Push Day');
