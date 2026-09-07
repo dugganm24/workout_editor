@@ -29,8 +29,16 @@ describe('WorkoutSchema', () => {
     expect(WorkoutSchema.parse(validWorkout)).toEqual(validWorkout);
   });
 
-  it('rejects a workout with no steps', () => {
-    expect(WorkoutSchema.safeParse({ ...validWorkout, steps: [] }).success).toBe(false);
+  it('accepts a workout with no steps (a freshly created draft)', () => {
+    expect(WorkoutSchema.safeParse({ ...validWorkout, steps: [] }).success).toBe(true);
+  });
+
+  it('rejects a repeat block with no steps', () => {
+    const bad = {
+      ...validWorkout,
+      steps: [{ kind: 'repeat', rounds: 3, steps: [] }],
+    };
+    expect(WorkoutSchema.safeParse(bad).success).toBe(false);
   });
 
   it('rejects an unknown schema version', () => {

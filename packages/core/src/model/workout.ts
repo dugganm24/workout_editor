@@ -60,7 +60,12 @@ export const WorkoutSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   sport: z.literal('strength'),
-  steps: z.array(WorkoutStepSchema).min(1),
+  /**
+   * May be empty: a freshly created workout has no steps yet. "At least one
+   * step" is an export-time requirement enforced by the format converters,
+   * not an invariant of a stored draft.
+   */
+  steps: z.array(WorkoutStepSchema),
 });
 
 export type WeightTarget = z.infer<typeof WeightTargetSchema>;
