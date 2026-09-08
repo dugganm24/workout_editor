@@ -182,6 +182,17 @@ describe('workout store', () => {
     expect(store().unreadable).toHaveLength(1);
   });
 
+  it('keeps an unread error across a library reload', async () => {
+    await store().createWorkout('Push Day');
+    await store().renameWorkout(store().summaries[0]?.id ?? '', '   ');
+    expect(store().error).toBe('A workout needs a name.');
+
+    // Returning to the library remounts it, which reloads. The message must
+    // survive: the user has not acted on it yet.
+    await store().loadLibrary();
+    expect(store().error).toBe('A workout needs a name.');
+  });
+
   it('clears a stale error once an export succeeds', async () => {
     await store().createWorkout('Push Day');
     await store().renameWorkout(store().summaries[0]?.id ?? '', '   ');

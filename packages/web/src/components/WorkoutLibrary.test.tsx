@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { SCHEMA_VERSION } from '@workout-editor/core';
+import { getDb, WORKOUT_STORE } from '../storage/db.ts';
+import * as storage from '../storage/workouts.ts';
 import { useWorkoutStore } from '../store/workoutStore.ts';
 import WorkoutLibrary from './WorkoutLibrary.tsx';
 
@@ -71,6 +74,37 @@ describe('WorkoutLibrary', () => {
   it('disables Export all until there is something to export', async () => {
     render(<WorkoutLibrary />);
     expect(await screen.findByRole('button', { name: 'Export all' })).toBeDisabled();
+  });
+
+  it('offers a retry when a reload fails, even with a list still on screen', async () => {
+    await useWorkoutStore.getState().createWorkout('Push Day');
+    useWorkoutStore.getState().closeWorkout();
+    render(<WorkoutLibrary />);
+    await screen.findByRole('button', { name: 'Push Day' });
+
+    const failing = vi.spyOn(storage, 'listWorkouts').mockRejectedValue(new Error('storage gone'));
+    await useWorkoutStore.getState().loadLibrary();
+    failing.mockRestore();
+
+    // The stale rows stay, but the user is told and given a way out.
+    expect(screen.getByRole('button', { name: 'Push Day' })).toBeInTheDocument();
+    expect(screen.getByText('Your library could not be refreshed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('does not claim the library is empty when records are only unreadable', async () => {
+    const db = await getDb();
+    await db.put(WORKOUT_STORE, {
+      id: 'bad',
+      seq: 1,
+      updatedAt: Date.now(),
+      workout: { schemaVersion: SCHEMA_VERSION, id: 'bad', sport: 'strength' },
+    } as never);
+
+    render(<WorkoutLibrary />);
+
+    expect(await screen.findByText(/could not be read/)).toBeInTheDocument();
+    expect(screen.queryByText('No workouts yet')).not.toBeInTheDocument();
   });
 
   it('duplicates a workout from the list', async () => {

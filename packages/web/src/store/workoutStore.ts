@@ -96,7 +96,10 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
     error: null,
 
     loadLibrary: async () => {
-      set({ status: 'loading', error: null });
+      // `error` is deliberately left alone: this runs on every mount, and
+      // returning to the library from the preview must not wipe a message the
+      // user has not acted on. "Try again" clears it explicitly.
+      set({ status: 'loading' });
       return serialize(async () => {
         try {
           await refresh();

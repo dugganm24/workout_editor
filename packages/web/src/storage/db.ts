@@ -32,8 +32,12 @@ interface WorkoutEditorDB extends DBSchema {
   [WORKOUT_STORE]: {
     key: string;
     value: WorkoutRecord;
-    /** `by-updatedAt` exists only on databases created by v1; see `upgrade`. */
-    indexes: { [UPDATED_AT_INDEX]: number; [SEQ_INDEX]: number };
+    /**
+     * `by-seq` is the only index any database has. v1's `by-updatedAt` is
+     * dropped by the upgrade below, so declaring it here would let a future
+     * `getAllFromIndex(UPDATED_AT_INDEX)` typecheck and then throw at runtime.
+     */
+    indexes: { [SEQ_INDEX]: number };
   };
 }
 
@@ -66,10 +70,8 @@ export function getDb(): Promise<IDBPDatabase<WorkoutEditorDB>> {
       // runs again against a database that already has the store.
       if (!db.objectStoreNames.contains(WORKOUT_STORE)) {
         const store = db.createObjectStore(WORKOUT_STORE, { keyPath: 'id' });
-        // Only `by-seq`: nothing queries `by-updatedAt`, and an index that is
-        // maintained on every write but never opened is pure cost. It survives
-        // below only because v1 databases already have it and the backfill
-        // reads it to recover their order.
+        // Only `by-seq`. Nothing queries `by-updatedAt`, and an index
+        // maintained on every write but never opened is pure cost.
         store.createIndex(SEQ_INDEX, 'seq');
         return;
       }
@@ -77,18 +79,26 @@ export function getDb(): Promise<IDBPDatabase<WorkoutEditorDB>> {
       const store = tx.objectStore(WORKOUT_STORE);
       if (!store.indexNames.contains(SEQ_INDEX)) {
         store.createIndex(SEQ_INDEX, 'seq');
-        // A record with no `seq` is absent from the index that now orders the
-        // library, which would hide it completely. Stamp the v1 rows in the
-        // order they already had.
-        // Ordered by the v1 index where it exists; a store without it still
-        // gets stamped, just in key order, rather than failing the upgrade.
-        const source = store.indexNames.contains(UPDATED_AT_INDEX)
-          ? store.index(UPDATED_AT_INDEX)
-          : store;
+
+        // Every row is read from the store itself, not through `by-updatedAt`:
+        // a record missing `updatedAt` is absent from that index, and since
+        // `by-seq` now drives every read it would vanish from the library, the
+        // backup, and even the unreadable list while still occupying space.
+        // Sorting in memory keeps v1's order without depending on the index.
+        const rows = await store.getAll();
+        // Untyped on purpose: `by-updatedAt` is absent from WorkoutEditorDB
+        // because no database keeps it past this point, and this is the one
+        // place a v1 database is known to still have it. Dropping it here stops
+        // upgraded users paying to maintain an index nothing reads.
+        const legacy = store as unknown as {
+          indexNames: { contains(name: string): boolean };
+          deleteIndex(name: string): void;
+        };
+        if (legacy.indexNames.contains(UPDATED_AT_INDEX)) legacy.deleteIndex(UPDATED_AT_INDEX);
+
+        rows.sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0));
         let seq = 0;
-        for (let cursor = await source.openCursor(); cursor; cursor = await cursor.continue()) {
-          await cursor.update({ ...cursor.value, seq: ++seq });
-        }
+        await Promise.all(rows.map((row) => store.put({ ...row, seq: ++seq })));
       }
     },
 
@@ -131,8 +141,10 @@ function withTimeout(
   opening: Promise<IDBPDatabase<WorkoutEditorDB>>,
   wasBlocked: () => boolean,
 ): Promise<IDBPDatabase<WorkoutEditorDB>> {
+  let abandoned = false;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
+      abandoned = true;
       reject(
         new Error(
           wasBlocked()
@@ -141,7 +153,15 @@ function withTimeout(
         ),
       );
     }, OPEN_TIMEOUT_MS);
-    opening.then(resolve, reject).finally(() => clearTimeout(timer));
+    opening
+      .then((db) => {
+        // A retry has already opened its own connection by now, so this one is
+        // unreachable: close it rather than leaving it to hold the database
+        // open and block the next version upgrade.
+        if (abandoned) db.close();
+        else resolve(db);
+      }, reject)
+      .finally(() => clearTimeout(timer));
   });
 }
 

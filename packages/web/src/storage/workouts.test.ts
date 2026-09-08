@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { openDB } from 'idb';
 import { SCHEMA_VERSION, type Workout } from '@workout-editor/core';
-import { closeDb, DB_NAME, getDb, UPDATED_AT_INDEX, WORKOUT_STORE } from './db.ts';
+import { closeDb, DB_NAME, getDb, SEQ_INDEX, UPDATED_AT_INDEX, WORKOUT_STORE } from './db.ts';
 import { UnsupportedSchemaVersionError } from './migrate.ts';
 import {
   createWorkout,
@@ -209,6 +209,38 @@ describe('workout storage', () => {
     // The bytes survive even though nothing can parse them.
     expect(unreadable.map((u) => u.id)).toEqual(['bad']);
     expect(unreadable[0]?.raw).toMatchObject({ id: 'bad' });
+  });
+
+  it('keeps a v1 record that has no updatedAt, instead of losing it', async () => {
+    const v1 = await openDB(DB_NAME, 1, {
+      upgrade(db) {
+        const store = db.createObjectStore(WORKOUT_STORE, { keyPath: 'id' });
+        store.createIndex(UPDATED_AT_INDEX, 'updatedAt');
+      },
+    });
+    await v1.put(WORKOUT_STORE, { id: 'a', updatedAt: 1_000, workout: newWorkout('Timed') });
+    // Absent from by-updatedAt, so an index-driven backfill would never see it.
+    await v1.put(WORKOUT_STORE, { id: 'b', workout: newWorkout('Untimed') });
+    v1.close();
+
+    const { workouts } = await listWorkouts();
+    expect(workouts.map((w) => w.name).sort()).toEqual(['Timed', 'Untimed']);
+  });
+
+  it('drops the v1 index nothing reads any more', async () => {
+    const v1 = await openDB(DB_NAME, 1, {
+      upgrade(db) {
+        const store = db.createObjectStore(WORKOUT_STORE, { keyPath: 'id' });
+        store.createIndex(UPDATED_AT_INDEX, 'updatedAt');
+      },
+    });
+    await v1.put(WORKOUT_STORE, { id: 'a', updatedAt: 1_000, workout: newWorkout('Kept') });
+    v1.close();
+
+    await listWorkouts();
+    const db = await getDb();
+    const names = [...db.transaction(WORKOUT_STORE).store.indexNames];
+    expect(names).toEqual([SEQ_INDEX]);
   });
 
   it('rejects a workout saved by a newer schema version', async () => {

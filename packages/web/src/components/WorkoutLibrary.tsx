@@ -25,6 +25,7 @@ export default function WorkoutLibrary() {
   const importWorkoutFile = useWorkoutStore((s) => s.importWorkoutFile);
   const exportLibrary = useWorkoutStore((s) => s.exportLibrary);
   const renameWorkout = useWorkoutStore((s) => s.renameWorkout);
+  const clearError = useWorkoutStore((s) => s.clearError);
 
   const fileInput = useRef<HTMLInputElement>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -98,23 +99,32 @@ export default function WorkoutLibrary() {
 
       {status === 'loading' && <p className="text-sm text-gray-500">Loading your library…</p>}
 
-      {status === 'error' && summaries.length === 0 && (
+      {status === 'error' && (
         <div className="rounded-md border border-dashed border-red-300 px-6 py-10 text-center">
-          <p className="font-medium text-gray-900">Your library could not be opened</p>
+          <p className="font-medium text-gray-900">
+            {summaries.length === 0
+              ? 'Your library could not be opened'
+              : 'Your library could not be refreshed'}
+          </p>
           <p className="mt-1 text-sm text-gray-600">
-            Nothing has been deleted — this browser refused to read its saved data.
+            {summaries.length === 0
+              ? 'Nothing has been deleted — this browser refused to read its saved data.'
+              : 'Nothing has been deleted, but the list below may be out of date.'}
           </p>
           <button
             type="button"
             className="mt-3 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
-            onClick={() => void loadLibrary()}
+            onClick={() => {
+              clearError();
+              void loadLibrary();
+            }}
           >
             Try again
           </button>
         </div>
       )}
 
-      {status === 'ready' && summaries.length === 0 && (
+      {status === 'ready' && summaries.length === 0 && unreadable.length === 0 && (
         <div className="rounded-md border border-dashed border-gray-300 px-6 py-10 text-center">
           <p className="font-medium text-gray-900">No workouts yet</p>
           <p className="mt-1 text-sm text-gray-600">
