@@ -122,19 +122,32 @@ export async function putWorkout(workout: Workout): Promise<WorkoutRecord> {
  * the whole batch back rather than leaving the library half-written. The max
  * `seq` is read once for the batch instead of once per workout.
  */
-export async function putWorkouts(workouts: Workout[]): Promise<WorkoutRecord[]> {
+export async function putWorkouts(
+  workouts: Workout[],
+  /**
+   * Payloads restored from a backup that this build cannot parse. They are
+   * written as-is under a fresh key and will read back as `unreadable`, which
+   * is the honest outcome: the bytes are preserved, not silently dropped.
+   */
+  unreadable: unknown[] = [],
+): Promise<WorkoutRecord[]> {
   // Validate before opening the transaction: a throw mid-transaction would
   // leave it to abort on its own.
   const migrated = workouts.map(migrateWorkout);
-  if (migrated.length === 0) return [];
+  if (migrated.length === 0 && unreadable.length === 0) return [];
 
   const db = await getDb();
   const tx = db.transaction(WORKOUT_STORE, 'readwrite');
   const newest = await tx.store.index(SEQ_INDEX).openCursor(null, 'prev');
   let seq = newest?.value.seq ?? 0;
 
-  const records = migrated.map((workout) => ({
-    id: workout.id,
+  const records = [
+    ...migrated.map((workout) => ({ id: workout.id, workout })),
+    // The record's own key is fresh; whatever id the payload carries inside is
+    // already unparseable, so it is not worth trusting.
+    ...unreadable.map((raw) => ({ id: crypto.randomUUID(), workout: raw as Workout })),
+  ].map(({ id, workout }) => ({
+    id,
     seq: ++seq,
     updatedAt: Date.now(),
     workout,

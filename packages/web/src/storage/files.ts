@@ -82,7 +82,7 @@ export function downloadLibraryJson(
   download(serializeLibrary(workouts, unreadable), LIBRARY_FILE);
 }
 
-function isLibraryFile(raw: unknown): raw is { workouts: unknown[] } {
+function isLibraryFile(raw: unknown): raw is { workouts: unknown[]; unreadable?: unknown } {
   return (
     typeof raw === 'object' &&
     raw !== null &&
@@ -91,12 +91,32 @@ function isLibraryFile(raw: unknown): raw is { workouts: unknown[] } {
   );
 }
 
+/** What a backup file restores: parsed workouts, plus payloads nothing can parse. */
+export interface ParsedBackup {
+  workouts: Workout[];
+  /** Raw records preserved by a previous export, restored without validation. */
+  unreadable: unknown[];
+}
+
+function readUnreadable(value: unknown): unknown[] {
+  if (!Array.isArray(value)) return [];
+  return (value as unknown[]).map((entry) =>
+    typeof entry === 'object' && entry !== null && 'raw' in entry
+      ? (entry as { raw: unknown }).raw
+      : entry,
+  );
+}
+
 /**
  * Parses a canonical backup file, accepting either a single workout or a
  * whole-library bundle. Results get fresh ids, so importing the same file twice
  * yields new workouts instead of silently overwriting existing ones.
+ *
+ * Records a previous export could not parse come back too, untouched: a backup
+ * that refuses to restore the very records it was taken to preserve is not a
+ * backup.
  */
-export function parseWorkoutsFile(text: string): Workout[] {
+export function parseWorkoutsFile(text: string): ParsedBackup {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -105,13 +125,15 @@ export function parseWorkoutsFile(text: string): Workout[] {
   }
 
   const entries = isLibraryFile(raw) ? raw.workouts : [raw];
-  if (entries.length === 0) {
+  const unreadable = isLibraryFile(raw) ? readUnreadable(raw.unreadable) : [];
+  if (entries.length === 0 && unreadable.length === 0) {
     throw new InvalidWorkoutError('That backup file contains no workouts.');
   }
 
   // Keep each file's name; only the id is fresh.
-  return entries.map((entry) => {
+  const workouts = entries.map((entry) => {
     const workout = migrateWorkout(entry);
     return copyWorkout(workout, workout.name);
   });
+  return { workouts, unreadable };
 }

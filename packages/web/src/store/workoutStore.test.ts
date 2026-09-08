@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { SCHEMA_VERSION } from '@workout-editor/core';
 import { serializeLibrary, serializeWorkout } from '../storage/files.ts';
 import * as storage from '../storage/workouts.ts';
 import { newWorkout } from '../storage/workouts.ts';
@@ -140,6 +141,45 @@ describe('workout store', () => {
     // All or nothing: a torn import used to leave the first entries behind.
     expect(store().summaries).toEqual([]);
     expect(store().error).toBeTruthy();
+  });
+
+  it('runs actions in dispatch order, so each sees the last one is writes', async () => {
+    await store().createWorkout('Push Day');
+    const id = store().summaries[0]?.id ?? '';
+
+    // The shape of blurring a rename and clicking Duplicate in one gesture.
+    await Promise.all([store().renameWorkout(id, 'Pull Day'), store().duplicateWorkout(id)]);
+
+    expect(
+      store()
+        .summaries.map((s) => s.name)
+        .sort(),
+    ).toEqual(['Pull Day', 'Pull Day (copy)']);
+  });
+
+  it('keeps an error a concurrent success would have wiped', async () => {
+    await store().createWorkout('Push Day');
+    const id = store().summaries[0]?.id ?? '';
+
+    await Promise.all([store().renameWorkout(id, '   '), store().duplicateWorkout(id)]);
+
+    // The duplicate succeeded, but the rename's complaint is still on screen.
+    expect(store().error).toBe('A workout needs a name.');
+    expect(store().summaries).toHaveLength(2);
+  });
+
+  it('restores records a backup preserved but cannot parse', async () => {
+    const corrupt = { schemaVersion: SCHEMA_VERSION, id: 'bad', sport: 'strength' };
+    const file = serializeLibrary(
+      [newWorkout('Good')],
+      [{ id: 'bad', reason: 'Not a valid workout', raw: corrupt }],
+    );
+
+    await store().importWorkoutFile(asFile(file));
+
+    expect(store().summaries.map((s) => s.name)).toEqual(['Good']);
+    // Still unreadable, but present rather than silently dropped.
+    expect(store().unreadable).toHaveLength(1);
   });
 
   it('clears a stale error once an export succeeds', async () => {

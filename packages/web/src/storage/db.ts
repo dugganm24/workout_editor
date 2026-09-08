@@ -39,8 +39,28 @@ interface WorkoutEditorDB extends DBSchema {
 
 let dbPromise: Promise<IDBPDatabase<WorkoutEditorDB>> | undefined;
 
+/**
+ * How long to wait for `openDB` before giving up. IndexedDB's `blocked` event
+ * does not reject the open request, it stalls it forever, so without a deadline
+ * a tab held open on an older DB_VERSION leaves the UI on "Loading your
+ * library…" with nothing to click and no error to show.
+ */
+export const OPEN_TIMEOUT_MS = 10_000;
+
 export function getDb(): Promise<IDBPDatabase<WorkoutEditorDB>> {
-  dbPromise ??= openDB<WorkoutEditorDB>(DB_NAME, DB_VERSION, {
+  if (dbPromise) return dbPromise;
+
+  /**
+   * Drop the cached connection, but only while it is still ours: a callback
+   * from a superseded attempt must not evict the handle that replaced it, or
+   * that connection becomes unreachable and stays open forever.
+   */
+  const invalidate = (): void => {
+    if (dbPromise === mine) dbPromise = undefined;
+  };
+
+  let blockedByOtherTab = false;
+  const opening = openDB<WorkoutEditorDB>(DB_NAME, DB_VERSION, {
     async upgrade(db, _oldVersion, _newVersion, tx) {
       // Only create what is missing: on a future DB_VERSION bump this callback
       // runs again against a database that already has the store.
@@ -60,36 +80,69 @@ export function getDb(): Promise<IDBPDatabase<WorkoutEditorDB>> {
         // A record with no `seq` is absent from the index that now orders the
         // library, which would hide it completely. Stamp the v1 rows in the
         // order they already had.
+        // Ordered by the v1 index where it exists; a store without it still
+        // gets stamped, just in key order, rather than failing the upgrade.
+        const source = store.indexNames.contains(UPDATED_AT_INDEX)
+          ? store.index(UPDATED_AT_INDEX)
+          : store;
         let seq = 0;
-        for (
-          let cursor = await store.index(UPDATED_AT_INDEX).openCursor();
-          cursor;
-          cursor = await cursor.continue()
-        ) {
+        for (let cursor = await source.openCursor(); cursor; cursor = await cursor.continue()) {
           await cursor.update({ ...cursor.value, seq: ++seq });
         }
       }
     },
 
     // Another tab is upgrading and is stuck behind this connection. Let go, or
-    // both tabs wait on each other forever.
+    // both tabs wait on each other forever. Close our own handle rather than
+    // whatever is cached now, which may already be a different connection.
     blocking() {
-      void closeDb();
+      invalidate();
+      void opening.then(
+        (db) => db.close(),
+        () => undefined,
+      );
+    },
+
+    // We are the ones stuck, behind a tab holding an older version open. This
+    // fires instead of settling, so it only records why the deadline below is
+    // about to be hit.
+    blocked() {
+      blockedByOtherTab = true;
     },
 
     // This connection died on its own (storage eviction, the browser reclaiming
     // the database). Without this the cached promise keeps resolving to a dead
     // handle and every later call throws until the page is reloaded.
-    terminated() {
-      dbPromise = undefined;
-    },
-  }).catch((error: unknown) => {
+    terminated: invalidate,
+  });
+
+  const mine = withTimeout(opening, () => blockedByOtherTab).catch((error: unknown) => {
     // A rejected promise must not be cached, or a single failed open (storage
     // blocked, a stuck upgrade) would break every later call until a reload.
-    dbPromise = undefined;
+    invalidate();
     throw error;
   });
-  return dbPromise;
+  dbPromise = mine;
+  return mine;
+}
+
+/** Turns a stalled open into a rejection the UI can show and retry. */
+function withTimeout(
+  opening: Promise<IDBPDatabase<WorkoutEditorDB>>,
+  wasBlocked: () => boolean,
+): Promise<IDBPDatabase<WorkoutEditorDB>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error(
+          wasBlocked()
+            ? 'Another tab is running an older version of Workout Editor. Close it, then try again.'
+            : 'Your browser did not respond when opening the workout library.',
+        ),
+      );
+    }, OPEN_TIMEOUT_MS);
+    opening.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
 }
 
 /** Drops the cached connection. Tests use this between fresh databases. */

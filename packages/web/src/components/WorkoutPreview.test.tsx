@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import * as files from '../storage/files.ts';
 import { useWorkoutStore } from '../store/workoutStore.ts';
 import WorkoutPreview from './WorkoutPreview.tsx';
 
@@ -37,6 +38,23 @@ describe('WorkoutPreview', () => {
 
     await waitFor(() => expect(useWorkoutStore.getState().error).toBe('A workout needs a name.'));
     expect(input).toHaveValue('Push Day');
+  });
+
+  it('exports the name just typed, not the one still in storage', async () => {
+    const user = userEvent.setup();
+    const download = vi.spyOn(files, 'downloadWorkoutJson').mockImplementation(() => undefined);
+    render(<WorkoutPreview workout={await open('Push Day')} />);
+
+    const input = screen.getByRole('textbox', { name: 'Workout name' });
+    await user.clear(input);
+    await user.type(input, 'Pull Day');
+    // Clicking blurs the field, which commits the rename; the export must wait
+    // for that write rather than racing it.
+    await user.click(screen.getByRole('button', { name: 'Export backup' }));
+
+    await waitFor(() => expect(download).toHaveBeenCalled());
+    expect(download.mock.calls[0]?.[0]?.name).toBe('Pull Day');
+    download.mockRestore();
   });
 
   it('leaves the name alone when it has not changed', async () => {

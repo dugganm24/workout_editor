@@ -45,22 +45,44 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
   }
 
   /**
+   * Actions run one at a time, in dispatch order. Storage is async, so
+   * overlapping actions each read the database before the other has written:
+   * blurring a rename and clicking Export in the same gesture dispatches both
+   * at once, and the export used to read the pre-rename record.
+   */
+  let queue: Promise<void> = Promise.resolve();
+  function serialize(work: () => Promise<void>): Promise<void> {
+    const result = queue.then(work);
+    // One action's failure must not break the chain for the next.
+    queue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  /**
    * The one path every action takes: run it, refresh the list unless the action
-   * changed nothing, and clear or set `error` from the outcome. Clearing on
-   * success lives here rather than in each action because that is how a stale
-   * banner kept surviving actions that succeeded.
+   * changed nothing, and route a failure to `error`.
+   *
+   * The banner is cleared at *dispatch*, not on success. Clearing on success
+   * meant a later action finishing could wipe an error the user had not read
+   * yet; clearing up front dismisses the old banner when the user asks for
+   * something new, and leaves whatever this batch of work reports.
    *
    * `status` is deliberately left alone: it describes the library load, and a
    * rejected action (a blank name, say) must not make the list look broken.
    */
-  async function run(action: () => Promise<void>, options?: { refresh: boolean }): Promise<void> {
-    try {
-      await action();
-      if (options?.refresh !== false) await refresh();
-      set({ error: null });
-    } catch (error) {
-      set({ error: errorMessage(error) });
-    }
+  function run(action: () => Promise<void>, options?: { refresh: boolean }): Promise<void> {
+    set({ error: null });
+    return serialize(async () => {
+      try {
+        await action();
+        if (options?.refresh !== false) await refresh();
+      } catch (error) {
+        set({ error: errorMessage(error) });
+      }
+    });
   }
 
   /** Reads without writing, so there is nothing to refresh afterwards. */
@@ -75,11 +97,13 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
 
     loadLibrary: async () => {
       set({ status: 'loading', error: null });
-      try {
-        await refresh();
-      } catch (error) {
-        set({ error: errorMessage(error), status: 'error' });
-      }
+      return serialize(async () => {
+        try {
+          await refresh();
+        } catch (error) {
+          set({ error: errorMessage(error), status: 'error' });
+        }
+      });
     },
 
     createWorkout: async (name) =>
@@ -132,7 +156,8 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
         });
         // Parse the whole file, then write it in one transaction: neither a bad
         // entry nor a failed write can leave the library half-imported.
-        await storage.putWorkouts(parseWorkoutsFile(text));
+        const { workouts, unreadable } = parseWorkoutsFile(text);
+        await storage.putWorkouts(workouts, unreadable);
       }),
 
     exportWorkout: async (id) =>

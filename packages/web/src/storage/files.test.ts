@@ -7,7 +7,7 @@ import { newWorkout } from './workouts.ts';
 describe('canonical workout files', () => {
   it('round-trips a workout, keeping the name but assigning a fresh id', () => {
     const workout = { ...newWorkout('Push Day'), steps: [] };
-    const [parsed] = parseWorkoutsFile(serializeWorkout(workout));
+    const [parsed] = parseWorkoutsFile(serializeWorkout(workout)).workouts;
 
     expect(parsed?.name).toBe('Push Day');
     expect(parsed?.id).not.toBe(workout.id);
@@ -16,7 +16,7 @@ describe('canonical workout files', () => {
 
   it('round-trips a whole-library bundle', () => {
     const workouts = [newWorkout('Push Day'), newWorkout('Pull Day')];
-    const parsed = parseWorkoutsFile(serializeLibrary(workouts));
+    const { workouts: parsed } = parseWorkoutsFile(serializeLibrary(workouts));
 
     expect(parsed.map((w) => w.name)).toEqual(['Push Day', 'Pull Day']);
     expect(parsed.map((w) => w.id)).not.toEqual(workouts.map((w) => w.id));
@@ -32,6 +32,16 @@ describe('canonical workout files', () => {
     };
     bundle.workouts.push({ nope: true });
     expect(() => parseWorkoutsFile(JSON.stringify(bundle))).toThrow(InvalidWorkoutError);
+  });
+
+  it('round-trips records it cannot parse, instead of dropping them', () => {
+    const corrupt = { schemaVersion: SCHEMA_VERSION, id: 'bad', sport: 'strength' };
+    const file = serializeLibrary([], [{ id: 'bad', reason: 'Not a valid workout', raw: corrupt }]);
+
+    // A library of nothing but corrupt records still produces a usable backup.
+    const { workouts, unreadable } = parseWorkoutsFile(file);
+    expect(workouts).toEqual([]);
+    expect(unreadable).toEqual([corrupt]);
   });
 
   it('slugifies the download filename', () => {
