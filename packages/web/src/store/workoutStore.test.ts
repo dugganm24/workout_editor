@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetApp } from '../testing.ts';
+import { describe, expect, it, vi } from 'vitest';
 import { serializeLibrary, serializeWorkout } from '../storage/files.ts';
+import * as storage from '../storage/workouts.ts';
 import { newWorkout } from '../storage/workouts.ts';
 import { useWorkoutStore } from './workoutStore.ts';
 
@@ -10,8 +10,6 @@ const store = () => useWorkoutStore.getState();
 const asFile = (text: string) => () => Promise.resolve(text);
 
 describe('workout store', () => {
-  beforeEach(resetApp);
-
   it('creates a workout, opens it, and lists it', async () => {
     await store().createWorkout('Push Day');
 
@@ -128,6 +126,29 @@ describe('workout store', () => {
 
     expect(store().error).toMatch(/JSON/);
     expect(store().summaries).toEqual([]);
+  });
+
+  it('writes nothing when a write fails part-way through a bundle', async () => {
+    const bundle = serializeLibrary(['A', 'B', 'C'].map((n) => newWorkout(n)));
+    const spy = vi
+      .spyOn(storage, 'putWorkouts')
+      .mockRejectedValueOnce(new Error('QuotaExceededError'));
+
+    await store().importWorkoutFile(asFile(bundle));
+    spy.mockRestore();
+
+    // All or nothing: a torn import used to leave the first entries behind.
+    expect(store().summaries).toEqual([]);
+    expect(store().error).toBeTruthy();
+  });
+
+  it('clears a stale error once an export succeeds', async () => {
+    await store().createWorkout('Push Day');
+    await store().renameWorkout(store().summaries[0]?.id ?? '', '   ');
+    expect(store().error).toBe('A workout needs a name.');
+
+    await store().exportLibrary();
+    expect(store().error).toBeNull();
   });
 
   it('reports a file it could not read instead of failing silently', async () => {

@@ -16,6 +16,16 @@ export interface WorkoutSummary {
 export interface UnreadableWorkout {
   id: string;
   reason: string;
+  /** The stored payload, kept so a backup can preserve what it cannot parse. */
+  raw: unknown;
+}
+
+/** The one condition every caller phrases the same way for the user. */
+export class WorkoutNotFoundError extends Error {
+  constructor() {
+    super('That workout is no longer in your library.');
+    this.name = 'WorkoutNotFoundError';
+  }
 }
 
 export interface Library {
@@ -55,6 +65,7 @@ async function readAll(): Promise<{ readable: ReadRecord[]; unreadable: Unreadab
       unreadable.push({
         id: record.id,
         reason: errorMessage(error),
+        raw: record.workout,
       });
     }
   }
@@ -73,10 +84,17 @@ export async function listWorkouts(): Promise<Library> {
   };
 }
 
-/** Every readable workout in full, newest first. Backs the whole-library backup. */
-export async function readAllWorkouts(): Promise<Workout[]> {
-  const { readable } = await readAll();
-  return readable.map(({ workout }) => workout);
+/**
+ * Everything the whole-library backup needs, newest first. Unreadable records
+ * come along as their raw payload: a backup that silently dropped exactly the
+ * records the user cannot otherwise reach would be the worst time to lose them.
+ */
+export async function readAllForBackup(): Promise<{
+  workouts: Workout[];
+  unreadable: UnreadableWorkout[];
+}> {
+  const { readable, unreadable } = await readAll();
+  return { workouts: readable.map(({ workout }) => workout), unreadable };
 }
 
 /** Throws if the stored record is invalid — callers opening a workout need to know. */
@@ -94,22 +112,37 @@ export async function getWorkout(id: string): Promise<Workout | undefined> {
  * nudged forward to break ties.
  */
 export async function putWorkout(workout: Workout): Promise<WorkoutRecord> {
+  const [record] = await putWorkouts([workout]);
+  if (!record) throw new Error('putWorkouts returned no record');
+  return record;
+}
+
+/**
+ * Writes a batch in a single transaction, so a failure part-way through rolls
+ * the whole batch back rather than leaving the library half-written. The max
+ * `seq` is read once for the batch instead of once per workout.
+ */
+export async function putWorkouts(workouts: Workout[]): Promise<WorkoutRecord[]> {
   // Validate before opening the transaction: a throw mid-transaction would
   // leave it to abort on its own.
-  const migrated = migrateWorkout(workout);
+  const migrated = workouts.map(migrateWorkout);
+  if (migrated.length === 0) return [];
 
   const db = await getDb();
   const tx = db.transaction(WORKOUT_STORE, 'readwrite');
   const newest = await tx.store.index(SEQ_INDEX).openCursor(null, 'prev');
-  const record: WorkoutRecord = {
+  let seq = newest?.value.seq ?? 0;
+
+  const records = migrated.map((workout) => ({
     id: workout.id,
-    seq: (newest?.value.seq ?? 0) + 1,
+    seq: ++seq,
     updatedAt: Date.now(),
-    workout: migrated,
-  };
-  await tx.store.put(record);
-  await tx.done;
-  return record;
+    workout,
+  }));
+  // Queue every put, then commit once: awaiting each in turn would serialize
+  // the round trips for no benefit.
+  await Promise.all([...records.map((record) => tx.store.put(record)), tx.done]);
+  return records;
 }
 
 export async function deleteWorkout(id: string): Promise<void> {
@@ -141,7 +174,7 @@ export function copyWorkout(workout: Workout, name = `${workout.name} (copy)`): 
 
 export async function duplicateWorkout(id: string): Promise<Workout> {
   const original = await getWorkout(id);
-  if (!original) throw new Error(`No workout with id "${id}"`);
+  if (!original) throw new WorkoutNotFoundError();
   const copy = copyWorkout(original);
   await putWorkout(copy);
   return copy;

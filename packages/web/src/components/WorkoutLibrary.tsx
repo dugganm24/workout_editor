@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useWorkoutStore } from '../store/workoutStore.ts';
 
+// Built once: passing an options object to toLocaleString bypasses the engine's
+// formatter cache, and this runs once per row on every render.
+const updatedAtFormat = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
 function formatUpdatedAt(timestamp: number): string {
-  return new Date(timestamp).toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
+  return updatedAtFormat.format(timestamp);
 }
 
 export default function WorkoutLibrary() {
@@ -52,7 +56,7 @@ export default function WorkoutLibrary() {
           <button
             type="button"
             className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-40"
-            disabled={summaries.length === 0}
+            disabled={summaries.length === 0 && unreadable.length === 0}
             onClick={() => void exportLibrary()}
           >
             Export all

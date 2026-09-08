@@ -1,13 +1,10 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { resetApp } from '../testing.ts';
 import { useWorkoutStore } from '../store/workoutStore.ts';
 import WorkoutLibrary from './WorkoutLibrary.tsx';
 
 describe('WorkoutLibrary', () => {
-  beforeEach(resetApp);
-
   it('shows the empty state when nothing is saved', async () => {
     render(<WorkoutLibrary />);
     expect(await screen.findByText('No workouts yet')).toBeInTheDocument();

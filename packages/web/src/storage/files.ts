@@ -19,6 +19,12 @@ interface LibraryFile {
   schemaVersion: number;
   exportedAt: string;
   workouts: unknown[];
+  /**
+   * Records this build could not parse, kept verbatim. They live under their
+   * own key so importing the file is unaffected, but the bytes survive a
+   * backup-and-reinstall instead of being silently dropped.
+   */
+  unreadable?: { id: string; reason: string; raw: unknown }[];
 }
 
 export function workoutFileName(workout: Workout): string {
@@ -34,12 +40,16 @@ export function serializeWorkout(workout: Workout): string {
   return `${JSON.stringify(workout, null, 2)}\n`;
 }
 
-export function serializeLibrary(workouts: Workout[]): string {
+export function serializeLibrary(
+  workouts: Workout[],
+  unreadable: { id: string; reason: string; raw: unknown }[] = [],
+): string {
   const file: LibraryFile = {
     kind: LIBRARY_KIND,
     schemaVersion: SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
     workouts,
+    ...(unreadable.length > 0 ? { unreadable } : {}),
   };
   return `${JSON.stringify(file, null, 2)}\n`;
 }
@@ -65,8 +75,11 @@ export function downloadWorkoutJson(workout: Workout): void {
 }
 
 /** Triggers a browser download of the whole library as a single backup file. */
-export function downloadLibraryJson(workouts: Workout[]): void {
-  download(serializeLibrary(workouts), LIBRARY_FILE);
+export function downloadLibraryJson(
+  workouts: Workout[],
+  unreadable: { id: string; reason: string; raw: unknown }[] = [],
+): void {
+  download(serializeLibrary(workouts, unreadable), LIBRARY_FILE);
 }
 
 function isLibraryFile(raw: unknown): raw is { workouts: unknown[] } {

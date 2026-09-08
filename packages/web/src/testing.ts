@@ -11,7 +11,7 @@ export async function resetApp(): Promise<void> {
     summaries: [],
     unreadable: [],
     currentWorkout: null,
-    status: 'idle',
+    status: 'loading',
     error: null,
   });
 }

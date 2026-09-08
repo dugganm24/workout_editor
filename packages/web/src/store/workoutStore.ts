@@ -3,6 +3,7 @@ import type { Workout } from '@workout-editor/core';
 import { errorMessage } from '../errors.ts';
 import { downloadLibraryJson, downloadWorkoutJson, parseWorkoutsFile } from '../storage/files.ts';
 import * as storage from '../storage/workouts.ts';
+import { WorkoutNotFoundError } from '../storage/workouts.ts';
 import type { UnreadableWorkout, WorkoutSummary } from '../storage/workouts.ts';
 
 /**
@@ -13,7 +14,7 @@ import type { UnreadableWorkout, WorkoutSummary } from '../storage/workouts.ts';
  * the builder UI, once there are URLs worth sharing.
  */
 
-export type LibraryStatus = 'idle' | 'loading' | 'ready' | 'error';
+export type LibraryStatus = 'loading' | 'ready' | 'error';
 
 export interface WorkoutState {
   summaries: WorkoutSummary[];
@@ -44,24 +45,32 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
   }
 
   /**
-   * Runs a mutation, refreshes the list, and routes failures to `error`.
+   * The one path every action takes: run it, refresh the list unless the action
+   * changed nothing, and clear or set `error` from the outcome. Clearing on
+   * success lives here rather than in each action because that is how a stale
+   * banner kept surviving actions that succeeded.
+   *
    * `status` is deliberately left alone: it describes the library load, and a
-   * rejected mutation (a blank name, say) must not make the list look broken.
+   * rejected action (a blank name, say) must not make the list look broken.
    */
-  async function withRefresh(action: () => Promise<void>): Promise<void> {
+  async function run(action: () => Promise<void>, options?: { refresh: boolean }): Promise<void> {
     try {
       await action();
-      await refresh();
+      if (options?.refresh !== false) await refresh();
+      set({ error: null });
     } catch (error) {
       set({ error: errorMessage(error) });
     }
   }
 
+  /** Reads without writing, so there is nothing to refresh afterwards. */
+  const readOnly = { refresh: false } as const;
+
   return {
     summaries: [],
     unreadable: [],
     currentWorkout: null,
-    status: 'idle',
+    status: 'loading',
     error: null,
 
     loadLibrary: async () => {
@@ -74,85 +83,73 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
     },
 
     createWorkout: async (name) =>
-      withRefresh(async () => {
+      run(async () => {
         const workout = await storage.createWorkout(name);
-        set({ currentWorkout: workout, error: null });
+        set({ currentWorkout: workout });
       }),
 
-    openWorkout: async (id) => {
-      try {
+    openWorkout: async (id) =>
+      run(async () => {
         const workout = await storage.getWorkout(id);
-        if (!workout) throw new Error('That workout is no longer in your library.');
-        set({ currentWorkout: workout, error: null });
-      } catch (error) {
-        set({ error: errorMessage(error) });
-      }
-    },
+        if (!workout) throw new WorkoutNotFoundError();
+        set({ currentWorkout: workout });
+      }, readOnly),
 
     closeWorkout: () => set({ currentWorkout: null }),
 
     renameWorkout: async (id, name) =>
-      withRefresh(async () => {
+      run(async () => {
         const trimmed = name.trim();
         if (!trimmed) throw new Error('A workout needs a name.');
         const workout = await storage.getWorkout(id);
-        if (!workout) throw new Error('That workout is no longer in your library.');
-        // A no-op rename must not bump updatedAt, which would reorder the library.
+        if (!workout) throw new WorkoutNotFoundError();
+        // A no-op rename must not bump the write order, which would reorder the library.
         if (trimmed !== workout.name) {
           const renamed = { ...workout, name: trimmed };
           await storage.putWorkout(renamed);
           if (get().currentWorkout?.id === id) set({ currentWorkout: renamed });
         }
-        set({ error: null });
       }),
 
     duplicateWorkout: async (id) =>
-      withRefresh(async () => {
+      run(async () => {
         await storage.duplicateWorkout(id);
-        set({ error: null });
       }),
 
     deleteWorkout: async (id) =>
-      withRefresh(async () => {
+      run(async () => {
         await storage.deleteWorkout(id);
         if (get().currentWorkout?.id === id) set({ currentWorkout: null });
-        set({ error: null });
       }),
 
     importWorkoutFile: async (readFile) =>
-      withRefresh(async () => {
+      run(async () => {
         // Reading happens in here so a file that vanishes or turns unreadable
         // between the picker and the read surfaces like every other import
         // failure, instead of rejecting into nothing.
         const text = await readFile().catch((error: unknown) => {
           throw new Error('That file could not be read.', { cause: error });
         });
-        // Parse the whole file before writing anything, so a bad entry cannot
-        // leave the library half-imported.
-        const workouts = parseWorkoutsFile(text);
-        for (const workout of workouts) await storage.putWorkout(workout);
-        set({ error: null });
+        // Parse the whole file, then write it in one transaction: neither a bad
+        // entry nor a failed write can leave the library half-imported.
+        await storage.putWorkouts(parseWorkoutsFile(text));
       }),
 
-    exportWorkout: async (id) => {
-      try {
+    exportWorkout: async (id) =>
+      run(async () => {
         const workout = await storage.getWorkout(id);
-        if (!workout) throw new Error('That workout is no longer in your library.');
+        if (!workout) throw new WorkoutNotFoundError();
         downloadWorkoutJson(workout);
-      } catch (error) {
-        set({ error: errorMessage(error) });
-      }
-    },
+      }, readOnly),
 
-    exportLibrary: async () => {
-      try {
-        const workouts = await storage.readAllWorkouts();
-        if (workouts.length === 0) throw new Error('There are no workouts to export.');
-        downloadLibraryJson(workouts);
-      } catch (error) {
-        set({ error: errorMessage(error) });
-      }
-    },
+    exportLibrary: async () =>
+      run(async () => {
+        const { workouts, unreadable } = await storage.readAllForBackup();
+        if (workouts.length === 0 && unreadable.length === 0) {
+          throw new Error('There are no workouts to export.');
+        }
+        downloadLibraryJson(workouts, unreadable);
+      }, readOnly),
 
     clearError: () => set({ error: null }),
   };

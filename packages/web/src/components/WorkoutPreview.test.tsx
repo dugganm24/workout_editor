@@ -1,7 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { resetApp } from '../testing.ts';
 import { useWorkoutStore } from '../store/workoutStore.ts';
 import WorkoutPreview from './WorkoutPreview.tsx';
 
@@ -14,8 +13,6 @@ async function open(name: string) {
 }
 
 describe('WorkoutPreview', () => {
-  beforeEach(resetApp);
-
   it('renames the open workout through the store', async () => {
     const user = userEvent.setup();
     render(<WorkoutPreview workout={await open('Push Day')} />);

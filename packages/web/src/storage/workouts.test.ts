@@ -1,9 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { openDB } from 'idb';
 import { SCHEMA_VERSION, type Workout } from '@workout-editor/core';
 import { closeDb, DB_NAME, getDb, UPDATED_AT_INDEX, WORKOUT_STORE } from './db.ts';
 import { UnsupportedSchemaVersionError } from './migrate.ts';
-import { resetDb } from './testing.ts';
 import {
   createWorkout,
   deleteWorkout,
@@ -12,6 +11,8 @@ import {
   listWorkouts,
   newWorkout,
   putWorkout,
+  putWorkouts,
+  readAllForBackup,
 } from './workouts.ts';
 
 function workoutWithSteps(name: string): Workout {
@@ -43,8 +44,6 @@ async function putRaw(id: string, workout: unknown, seq = ++rawSeq): Promise<voi
 }
 
 describe('workout storage', () => {
-  beforeEach(resetDb);
-
   it('round-trips a workout through IndexedDB', async () => {
     const workout = workoutWithSteps('Leg Day');
     await putWorkout(workout);
@@ -132,6 +131,12 @@ describe('workout storage', () => {
     }
   });
 
+  it('writes a batch in one transaction, in order', async () => {
+    const written = await putWorkouts(['A', 'B', 'C'].map((n) => newWorkout(n)));
+    expect(written.map((r) => r.seq)).toEqual([1, 2, 3]);
+    expect((await listWorkouts()).workouts.map((w) => w.name)).toEqual(['C', 'B', 'A']);
+  });
+
   it('duplicates under a new id without touching the original', async () => {
     const original = await createWorkout('Push Day');
     const copy = await duplicateWorkout(original.id);
@@ -193,6 +198,17 @@ describe('workout storage', () => {
       'Newer',
       'Older',
     ]);
+  });
+
+  it('keeps unreadable records available for the backup', async () => {
+    await putRaw('good', newWorkout('Good'));
+    await putRaw('bad', { schemaVersion: SCHEMA_VERSION, id: 'bad', sport: 'strength' });
+
+    const { workouts, unreadable } = await readAllForBackup();
+    expect(workouts.map((w) => w.name)).toEqual(['Good']);
+    // The bytes survive even though nothing can parse them.
+    expect(unreadable.map((u) => u.id)).toEqual(['bad']);
+    expect(unreadable[0]?.raw).toMatchObject({ id: 'bad' });
   });
 
   it('rejects a workout saved by a newer schema version', async () => {

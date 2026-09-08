@@ -32,6 +32,7 @@ interface WorkoutEditorDB extends DBSchema {
   [WORKOUT_STORE]: {
     key: string;
     value: WorkoutRecord;
+    /** `by-updatedAt` exists only on databases created by v1; see `upgrade`. */
     indexes: { [UPDATED_AT_INDEX]: number; [SEQ_INDEX]: number };
   };
 }
@@ -45,7 +46,10 @@ export function getDb(): Promise<IDBPDatabase<WorkoutEditorDB>> {
       // runs again against a database that already has the store.
       if (!db.objectStoreNames.contains(WORKOUT_STORE)) {
         const store = db.createObjectStore(WORKOUT_STORE, { keyPath: 'id' });
-        store.createIndex(UPDATED_AT_INDEX, 'updatedAt');
+        // Only `by-seq`: nothing queries `by-updatedAt`, and an index that is
+        // maintained on every write but never opened is pure cost. It survives
+        // below only because v1 databases already have it and the backfill
+        // reads it to recover their order.
         store.createIndex(SEQ_INDEX, 'seq');
         return;
       }

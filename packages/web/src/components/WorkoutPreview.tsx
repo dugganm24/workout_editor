@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { Workout } from '@workout-editor/core';
 import { useWorkoutStore } from '../store/workoutStore.ts';
 import StepList from './StepList.tsx';
@@ -13,17 +13,21 @@ export default function WorkoutPreview({ workout }: { workout: Workout }) {
   const exportWorkout = useWorkoutStore((s) => s.exportWorkout);
   const duplicateWorkout = useWorkoutStore((s) => s.duplicateWorkout);
 
-  const [name, setName] = useState(workout.name);
-
-  // Re-sync when a different workout is opened, or the name changes elsewhere.
-  useEffect(() => setName(workout.name), [workout.id, workout.name]);
+  /**
+   * An edit buffer, null when not editing, rather than a copy of the prop. The
+   * stored name then flows in through normal rendering: no effect to re-sync
+   * it, and nothing to reconcile when it changes elsewhere.
+   */
+  const [draft, setDraft] = useState<string | null>(null);
+  const name = draft ?? workout.name;
 
   async function commitName() {
+    if (draft === null) return;
+    setDraft(null);
     // The store owns the naming rules — trimming, rejecting a blank name, and
     // skipping a no-op. Pre-checking here is how this view and the library
     // drifted into disagreeing about what a blank name does.
-    await renameWorkout(workout.id, name);
-    setName(useWorkoutStore.getState().currentWorkout?.name ?? name);
+    await renameWorkout(workout.id, draft);
   }
 
   return (
@@ -44,11 +48,11 @@ export default function WorkoutPreview({ workout }: { workout: Workout }) {
           <input
             className="w-full rounded-md border border-transparent px-2 py-1 text-2xl font-semibold tracking-tight hover:border-gray-300 focus:border-gray-400 focus:outline-none"
             value={name}
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => setDraft(event.target.value)}
             onBlur={() => void commitName()}
             onKeyDown={(event) => {
               if (event.key === 'Enter') event.currentTarget.blur();
-              if (event.key === 'Escape') setName(workout.name);
+              if (event.key === 'Escape') setDraft(null);
             }}
           />
         </label>
