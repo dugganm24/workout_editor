@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { SCHEMA_VERSION, WorkoutSchema } from './workout.js';
+import {
+  countLeafSteps,
+  ExportableWorkoutSchema,
+  SCHEMA_VERSION,
+  WorkoutSchema,
+} from './workout.js';
 
 const validWorkout = {
   schemaVersion: SCHEMA_VERSION,
@@ -29,8 +34,16 @@ describe('WorkoutSchema', () => {
     expect(WorkoutSchema.parse(validWorkout)).toEqual(validWorkout);
   });
 
-  it('rejects a workout with no steps', () => {
-    expect(WorkoutSchema.safeParse({ ...validWorkout, steps: [] }).success).toBe(false);
+  it('accepts a workout with no steps (a freshly created draft)', () => {
+    expect(WorkoutSchema.safeParse({ ...validWorkout, steps: [] }).success).toBe(true);
+  });
+
+  it('rejects a repeat block with no steps', () => {
+    const bad = {
+      ...validWorkout,
+      steps: [{ kind: 'repeat', rounds: 3, steps: [] }],
+    };
+    expect(WorkoutSchema.safeParse(bad).success).toBe(false);
   });
 
   it('rejects an unknown schema version', () => {
@@ -49,5 +62,48 @@ describe('WorkoutSchema', () => {
       ],
     };
     expect(WorkoutSchema.safeParse(bad).success).toBe(false);
+  });
+});
+
+describe('ExportableWorkoutSchema', () => {
+  it('accepts a workout that has steps', () => {
+    expect(ExportableWorkoutSchema.parse(validWorkout)).toEqual(validWorkout);
+  });
+
+  it('rejects the empty draft that WorkoutSchema allows', () => {
+    const draft = { ...validWorkout, steps: [] };
+    expect(WorkoutSchema.safeParse(draft).success).toBe(true);
+    expect(ExportableWorkoutSchema.safeParse(draft).success).toBe(false);
+  });
+
+  it('still applies every WorkoutSchema rule', () => {
+    const bad = { ...validWorkout, steps: [{ kind: 'repeat', rounds: 3, steps: [] }] };
+    expect(ExportableWorkoutSchema.safeParse(bad).success).toBe(false);
+  });
+});
+
+describe('countLeafSteps', () => {
+  it('counts leaves, recursing into repeat blocks without multiplying rounds', () => {
+    expect(
+      countLeafSteps([
+        {
+          kind: 'repeat',
+          rounds: 4,
+          steps: [
+            { kind: 'exercise', category: 'SQUAT', duration: { type: 'reps', reps: 5 } },
+            {
+              kind: 'repeat',
+              rounds: 2,
+              steps: [{ kind: 'rest', duration: { type: 'time', seconds: 60 } }],
+            },
+          ],
+        },
+        { kind: 'rest', duration: { type: 'time', seconds: 120 } },
+      ]),
+    ).toBe(3);
+  });
+
+  it('counts an empty draft as zero', () => {
+    expect(countLeafSteps([])).toBe(0);
   });
 });

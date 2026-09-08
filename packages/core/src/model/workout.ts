@@ -60,7 +60,25 @@ export const WorkoutSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   sport: z.literal('strength'),
-  steps: z.array(WorkoutStepSchema).min(1),
+  /**
+   * May be empty: a freshly created workout has no steps yet. "At least one
+   * step" is an export-time requirement, enforced by ExportableWorkoutSchema
+   * below rather than by every converter separately.
+   */
+  steps: z.array(WorkoutStepSchema),
+});
+
+/**
+ * A workout that is ready to be converted to a target format. Identical to
+ * WorkoutSchema except that `steps` may not be empty: a draft with no steps is
+ * a legitimate thing to store, but not a workout any device can run.
+ *
+ * Converters in `src/connect/` parse through this so the invariant lives in one
+ * place. It deliberately does not gate the canonical-JSON backup, which must be
+ * able to round-trip an empty draft.
+ */
+export const ExportableWorkoutSchema = WorkoutSchema.extend({
+  steps: z.array(WorkoutStepSchema).min(1, 'A workout needs at least one step to export.'),
 });
 
 export type WeightTarget = z.infer<typeof WeightTargetSchema>;
@@ -73,3 +91,21 @@ export interface RepeatBlock {
 }
 export type WorkoutStep = ExerciseStep | RestStep | RepeatBlock;
 export type Workout = z.infer<typeof WorkoutSchema>;
+export type ExportableWorkout = z.infer<typeof ExportableWorkoutSchema>;
+
+/**
+ * Leaf steps in a step tree, recursing into repeat blocks: a workout built as
+ * one block of six exercises is six steps, not one. Rounds are deliberately not
+ * multiplied in — the count says what the workout *contains*, so editing a
+ * round count does not swing it.
+ *
+ * Lives beside the schema that defines the tree so every consumer that needs to
+ * walk it — the library summary, a future duration estimate, the `src/connect/`
+ * converters — shares one definition of "descend into repeat, else leaf".
+ */
+export function countLeafSteps(steps: WorkoutStep[]): number {
+  return steps.reduce(
+    (total, step) => total + (step.kind === 'repeat' ? countLeafSteps(step.steps) : 1),
+    0,
+  );
+}
