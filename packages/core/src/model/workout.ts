@@ -61,24 +61,12 @@ export const WorkoutSchema = z.object({
   name: z.string().min(1),
   sport: z.literal('strength'),
   /**
-   * May be empty: a freshly created workout has no steps yet. "At least one
-   * step" is an export-time requirement, enforced by ExportableWorkoutSchema
-   * below rather than by every converter separately.
+   * May be empty: a freshly created workout has no steps yet, and the JSON
+   * backup has to round-trip that draft. "At least one step" is a requirement
+   * of conversion to a device format, not of storage — the first converter
+   * written needs to enforce it, since nothing here does.
    */
   steps: z.array(WorkoutStepSchema),
-});
-
-/**
- * A workout that is ready to be converted to a target format. Identical to
- * WorkoutSchema except that `steps` may not be empty: a draft with no steps is
- * a legitimate thing to store, but not a workout any device can run.
- *
- * Converters in `src/connect/` parse through this so the invariant lives in one
- * place. It deliberately does not gate the canonical-JSON backup, which must be
- * able to round-trip an empty draft.
- */
-export const ExportableWorkoutSchema = WorkoutSchema.extend({
-  steps: z.array(WorkoutStepSchema).min(1, 'A workout needs at least one step to export.'),
 });
 
 export type WeightTarget = z.infer<typeof WeightTargetSchema>;
@@ -91,7 +79,6 @@ export interface RepeatBlock {
 }
 export type WorkoutStep = ExerciseStep | RestStep | RepeatBlock;
 export type Workout = z.infer<typeof WorkoutSchema>;
-export type ExportableWorkout = z.infer<typeof ExportableWorkoutSchema>;
 
 /**
  * Leaf steps in a step tree, recursing into repeat blocks: a workout built as

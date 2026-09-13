@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { openDB } from 'idb';
 import { SCHEMA_VERSION, type Workout } from '@workout-editor/core';
-import { closeDb, DB_NAME, getDb, SEQ_INDEX, UPDATED_AT_INDEX, WORKOUT_STORE } from './db.ts';
+import { closeDb, getDb, SEQ_INDEX, WORKOUT_STORE } from './db.ts';
 import { UnsupportedSchemaVersionError } from './migrate.ts';
 import {
   createWorkout,
@@ -165,39 +164,54 @@ describe('workout storage', () => {
     expect((await listWorkouts()).workouts.map((w) => w.name)).toEqual(['Leg Day']);
   });
 
-  it('hides a corrupt record instead of blanking the library', async () => {
+  it('hides corrupt records instead of blanking the library, newest first', async () => {
+    const corrupt = { schemaVersion: SCHEMA_VERSION, sport: 'strength' };
+    await putRaw('older-bad', { ...corrupt, id: 'older-bad' });
     await putRaw('good', newWorkout('Good'));
-    await putRaw('bad', { schemaVersion: SCHEMA_VERSION, id: 'bad', sport: 'strength' });
+    await putRaw('newer-bad', { ...corrupt, id: 'newer-bad' });
 
     const { workouts, unreadable } = await listWorkouts();
     expect(workouts.map((w) => w.name)).toEqual(['Good']);
-    expect(unreadable.map((u) => u.id)).toEqual(['bad']);
+    // Shown directly above the workout list, so ordered the same way.
+    expect(unreadable.map((u) => u.id)).toEqual(['newer-bad', 'older-bad']);
   });
 
-  it('backfills write order for a database saved before seq existed', async () => {
-    // Rebuild the v1 shape by hand: records with no `seq`, ordered by updatedAt.
-    const v1 = await openDB(DB_NAME, 1, {
-      upgrade(db) {
-        const store = db.createObjectStore(WORKOUT_STORE, { keyPath: 'id' });
-        store.createIndex(UPDATED_AT_INDEX, 'updatedAt');
-      },
-    });
-    await v1.put(WORKOUT_STORE, { id: 'a', updatedAt: 1_000, workout: newWorkout('Older') });
-    await v1.put(WORKOUT_STORE, { id: 'b', updatedAt: 2_000, workout: newWorkout('Newer') });
-    v1.close();
+  it('restores a whole-library backup in the order it was taken', async () => {
+    for (const name of ['A', 'B', 'C']) await createWorkout(name);
+    expect((await listWorkouts()).workouts.map((w) => w.name)).toEqual(['C', 'B', 'A']);
 
-    // Opening at v2 must keep both rows and their order, not hide the ones the
-    // new index cannot see.
-    const { workouts } = await listWorkouts();
-    expect(workouts.map((w) => w.name)).toEqual(['Newer', 'Older']);
+    const backup = await readAllForBackup();
+    for (const { id } of (await listWorkouts()).workouts) await deleteWorkout(id);
 
-    // ...and a write after the upgrade still lands on top.
-    await createWorkout('Newest');
-    expect((await listWorkouts()).workouts.map((w) => w.name)).toEqual([
-      'Newest',
-      'Newer',
-      'Older',
-    ]);
+    await putWorkouts(backup.workouts);
+    // Every restored record shares one `updatedAt`, so a backup handed over
+    // newest-first would come back upside down with nothing left to sort by.
+    expect((await listWorkouts()).workouts.map((w) => w.name)).toEqual(['C', 'B', 'A']);
+  });
+
+  it('restores unreadable payloads below the workouts that can be shown', async () => {
+    await putRaw('bad', { schemaVersion: SCHEMA_VERSION, id: 'bad', sport: 'strength' });
+    await createWorkout('Readable');
+
+    const backup = await readAllForBackup();
+    for (const { id } of (await listWorkouts()).workouts) await deleteWorkout(id);
+    await deleteWorkout('bad');
+
+    await putWorkouts(
+      backup.workouts,
+      backup.unreadable.map((u) => u.raw),
+    );
+
+    const { workouts, unreadable } = await listWorkouts();
+    expect(workouts.map((w) => w.name)).toEqual(['Readable']);
+    expect(unreadable).toHaveLength(1);
+
+    // The restored payload renders no row of its own, so a higher `seq` than
+    // the real workouts would push the whole library down behind nothing.
+    const db = await getDb();
+    const rows = await db.getAllFromIndex(WORKOUT_STORE, SEQ_INDEX);
+    const seqOf = (id?: string) => rows.find((row) => row.id === id)?.seq;
+    expect(seqOf(unreadable[0]?.id)).toBeLessThan(seqOf(workouts[0]?.id) ?? 0);
   });
 
   it('keeps unreadable records available for the backup', async () => {
@@ -209,38 +223,6 @@ describe('workout storage', () => {
     // The bytes survive even though nothing can parse them.
     expect(unreadable.map((u) => u.id)).toEqual(['bad']);
     expect(unreadable[0]?.raw).toMatchObject({ id: 'bad' });
-  });
-
-  it('keeps a v1 record that has no updatedAt, instead of losing it', async () => {
-    const v1 = await openDB(DB_NAME, 1, {
-      upgrade(db) {
-        const store = db.createObjectStore(WORKOUT_STORE, { keyPath: 'id' });
-        store.createIndex(UPDATED_AT_INDEX, 'updatedAt');
-      },
-    });
-    await v1.put(WORKOUT_STORE, { id: 'a', updatedAt: 1_000, workout: newWorkout('Timed') });
-    // Absent from by-updatedAt, so an index-driven backfill would never see it.
-    await v1.put(WORKOUT_STORE, { id: 'b', workout: newWorkout('Untimed') });
-    v1.close();
-
-    const { workouts } = await listWorkouts();
-    expect(workouts.map((w) => w.name).sort()).toEqual(['Timed', 'Untimed']);
-  });
-
-  it('drops the v1 index nothing reads any more', async () => {
-    const v1 = await openDB(DB_NAME, 1, {
-      upgrade(db) {
-        const store = db.createObjectStore(WORKOUT_STORE, { keyPath: 'id' });
-        store.createIndex(UPDATED_AT_INDEX, 'updatedAt');
-      },
-    });
-    await v1.put(WORKOUT_STORE, { id: 'a', updatedAt: 1_000, workout: newWorkout('Kept') });
-    v1.close();
-
-    await listWorkouts();
-    const db = await getDb();
-    const names = [...db.transaction(WORKOUT_STORE).store.indexNames];
-    expect(names).toEqual([SEQ_INDEX]);
   });
 
   it('rejects a workout saved by a newer schema version', async () => {

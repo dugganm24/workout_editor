@@ -1,32 +1,35 @@
 import { describe, expect, it, vi } from 'vitest';
-import { openDB } from 'idb';
-import { closeDb, DB_NAME, getDb, OPEN_TIMEOUT_MS, UPDATED_AT_INDEX, WORKOUT_STORE } from './db.ts';
+import { closeDb, getDb, OPEN_TIMEOUT_MS } from './db.ts';
 
 describe('database connection', () => {
-  it('gives up instead of hanging when another tab holds an older version open', async () => {
+  it('gives up instead of hanging when the open request never settles', async () => {
     // Only setTimeout is faked; fake-indexeddb needs the rest of the clock.
     vi.useFakeTimers({ toFake: ['setTimeout'] });
-    // A tab still on v1 that never closes: IndexedDB fires `blocked` and then
-    // simply never settles the open request.
-    const stale = await openDB(DB_NAME, 1, {
-      upgrade(db) {
-        const store = db.createObjectStore(WORKOUT_STORE, { keyPath: 'id' });
-        store.createIndex(UPDATED_AT_INDEX, 'updatedAt');
-      },
+    // IndexedDB can leave an open request pending forever rather than failing:
+    // a tab holding an older version open fires `blocked` and then simply never
+    // settles. Nothing here can produce that state on demand, so stand in for
+    // it with a request that fires no events at all.
+    // Built on the real prototype so idb recognises it as a request and waits
+    // on its events, of which there are none.
+    const stalled = Object.assign(Object.create(IDBOpenDBRequest.prototype) as object, {
+      addEventListener() {},
+      removeEventListener() {},
     });
+    const open = vi
+      .spyOn(indexedDB, 'open')
+      .mockReturnValue(stalled as unknown as IDBOpenDBRequest);
 
     try {
       // Assert before advancing: the rejection lands while the timers run, and
       // a handler attached afterwards would be too late.
-      // What matters is that it settles at all: a blocked open neither resolves
-      // nor rejects on its own, which used to strand the UI on "Loading your
-      // library…" with no error and nothing to retry. (fake-indexeddb does not
-      // deliver `blocked`, so the generic message is the one that surfaces.)
+      // What matters is that it settles at all — an open that neither resolves
+      // nor rejects used to strand the UI on "Loading your library…" with no
+      // error and nothing to retry.
       const settled = expect(getDb()).rejects.toThrow();
       await vi.advanceTimersByTimeAsync(OPEN_TIMEOUT_MS);
       await settled;
     } finally {
-      stale.close();
+      open.mockRestore();
       vi.useRealTimers();
       await closeDb();
     }

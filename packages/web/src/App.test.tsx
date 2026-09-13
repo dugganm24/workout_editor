@@ -15,7 +15,8 @@ describe('App', () => {
   it('shows a store error and dismisses it', async () => {
     const user = userEvent.setup();
     render(<App />);
-    // Let the mount load settle first: loadLibrary clears `error` by design.
+    // Let the mount load settle first, so the error below is raised against a
+    // settled library rather than racing the load's own set().
     await screen.findByText('No workouts yet');
 
     await useWorkoutStore.getState().openWorkout('gone');

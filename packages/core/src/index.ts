@@ -2,7 +2,6 @@ export {
   SCHEMA_VERSION,
   countLeafSteps,
   WorkoutSchema,
-  ExportableWorkoutSchema,
   WorkoutStepSchema,
   ExerciseStepSchema,
   RestStepSchema,
@@ -11,7 +10,6 @@ export {
 } from './model/workout.js';
 export type {
   Workout,
-  ExportableWorkout,
   WorkoutStep,
   ExerciseStep,
   RestStep,

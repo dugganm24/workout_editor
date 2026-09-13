@@ -23,20 +23,15 @@ export interface WorkoutRecord {
 }
 
 export const DB_NAME = 'workout-editor';
-export const DB_VERSION = 2;
+export const DB_VERSION = 1;
 export const WORKOUT_STORE = 'workouts';
-export const UPDATED_AT_INDEX = 'by-updatedAt';
 export const SEQ_INDEX = 'by-seq';
 
 interface WorkoutEditorDB extends DBSchema {
   [WORKOUT_STORE]: {
     key: string;
     value: WorkoutRecord;
-    /**
-     * `by-seq` is the only index any database has. v1's `by-updatedAt` is
-     * dropped by the upgrade below, so declaring it here would let a future
-     * `getAllFromIndex(UPDATED_AT_INDEX)` typecheck and then throw at runtime.
-     */
+    /** `by-seq` is the only index: see the note on `WorkoutRecord.seq`. */
     indexes: { [SEQ_INDEX]: number };
   };
 }
@@ -65,41 +60,14 @@ export function getDb(): Promise<IDBPDatabase<WorkoutEditorDB>> {
 
   let blockedByOtherTab = false;
   const opening = openDB<WorkoutEditorDB>(DB_NAME, DB_VERSION, {
-    async upgrade(db, _oldVersion, _newVersion, tx) {
-      // Only create what is missing: on a future DB_VERSION bump this callback
-      // runs again against a database that already has the store.
-      if (!db.objectStoreNames.contains(WORKOUT_STORE)) {
-        const store = db.createObjectStore(WORKOUT_STORE, { keyPath: 'id' });
-        // Only `by-seq`. Nothing queries `by-updatedAt`, and an index
-        // maintained on every write but never opened is pure cost.
-        store.createIndex(SEQ_INDEX, 'seq');
-        return;
-      }
-
-      const store = tx.objectStore(WORKOUT_STORE);
-      if (!store.indexNames.contains(SEQ_INDEX)) {
-        store.createIndex(SEQ_INDEX, 'seq');
-
-        // Every row is read from the store itself, not through `by-updatedAt`:
-        // a record missing `updatedAt` is absent from that index, and since
-        // `by-seq` now drives every read it would vanish from the library, the
-        // backup, and even the unreadable list while still occupying space.
-        // Sorting in memory keeps v1's order without depending on the index.
-        const rows = await store.getAll();
-        // Untyped on purpose: `by-updatedAt` is absent from WorkoutEditorDB
-        // because no database keeps it past this point, and this is the one
-        // place a v1 database is known to still have it. Dropping it here stops
-        // upgraded users paying to maintain an index nothing reads.
-        const legacy = store as unknown as {
-          indexNames: { contains(name: string): boolean };
-          deleteIndex(name: string): void;
-        };
-        if (legacy.indexNames.contains(UPDATED_AT_INDEX)) legacy.deleteIndex(UPDATED_AT_INDEX);
-
-        rows.sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0));
-        let seq = 0;
-        await Promise.all(rows.map((row) => store.put({ ...row, seq: ++seq })));
-      }
+    // The only version there has ever been, so this runs on creation alone. A
+    // future DB_VERSION bump has to branch on `oldVersion` here: by then the
+    // store already exists and createObjectStore would throw.
+    upgrade(db) {
+      const store = db.createObjectStore(WORKOUT_STORE, { keyPath: 'id' });
+      // Only `by-seq`. Nothing queries by timestamp, and an index maintained on
+      // every write but never opened is pure cost.
+      store.createIndex(SEQ_INDEX, 'seq');
     },
 
     // Another tab is upgrading and is stuck behind this connection. Let go, or

@@ -6,6 +6,14 @@ import { useWorkoutStore } from './store/workoutStore.ts';
  * `WorkoutState` cannot be reset in one test file and forgotten in another.
  */
 export async function resetApp(): Promise<void> {
+  // Drain the store's action queue before anything else. A test that renders
+  // the app without awaiting the mount's `loadLibrary` leaves that action
+  // queued, holding the connection this reset is about to close; when it
+  // resumes it throws and writes `error`/`status: 'error'` into the *next*
+  // test's state. Actions run in order, so awaiting one more waits out
+  // everything queued ahead of it — `loadLibrary` is the one that changes
+  // nothing and cannot reject.
+  await useWorkoutStore.getState().loadLibrary();
   await resetDb();
   useWorkoutStore.setState({
     summaries: [],

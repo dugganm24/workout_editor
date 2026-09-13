@@ -88,13 +88,55 @@ export default function WorkoutLibrary() {
       </div>
 
       {unreadable.length > 0 && (
-        <p
-          className="rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-800"
-          title={unreadable.map((entry) => entry.reason).join('\n')}
-        >
-          {unreadable.length} saved workout{unreadable.length === 1 ? '' : 's'} could not be read
-          and {unreadable.length === 1 ? 'is' : 'are'} hidden.
-        </p>
+        <div className="rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p>
+            {unreadable.length} saved workout{unreadable.length === 1 ? '' : 's'} could not be read
+            and {unreadable.length === 1 ? 'is' : 'are'} hidden. &ldquo;Export all&rdquo; still
+            includes {unreadable.length === 1 ? 'its' : 'their'} raw data — back up before deleting.
+          </p>
+          {/* Listed with their own Delete: excluded from `summaries`, these records
+              render no row of their own, so without this the banner is permanent and
+              the only way out of it is clearing the browser's site data. */}
+          <ul className="mt-2 flex flex-col gap-2">
+            {unreadable.map((entry) => (
+              <li key={entry.id} className="flex flex-wrap items-center justify-between gap-3">
+                <span className="min-w-0 break-words">
+                  <code className="font-mono text-xs">{entry.id.slice(0, 8)}</code> — {entry.reason}
+                </span>
+                {pendingDelete === entry.id ? (
+                  <span className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded-md bg-red-600 px-2.5 py-1 text-white hover:bg-red-700"
+                      onClick={() => {
+                        setPendingDelete(null);
+                        void deleteWorkout(entry.id);
+                      }}
+                    >
+                      Confirm delete
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-md border border-amber-300 px-2.5 py-1 hover:bg-amber-100"
+                      onClick={() => setPendingDelete(null)}
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    aria-label={`Delete unreadable record ${entry.id.slice(0, 8)}`}
+                    className="rounded-md border border-amber-300 px-2.5 py-1 text-red-700 hover:bg-amber-100"
+                    onClick={() => setPendingDelete(entry.id)}
+                  >
+                    Delete
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {status === 'loading' && <p className="text-sm text-gray-500">Loading your library…</p>}

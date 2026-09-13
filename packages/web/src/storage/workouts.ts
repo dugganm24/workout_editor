@@ -48,9 +48,11 @@ interface ReadRecord {
 }
 
 /**
- * One pass over the store, newest first: every record is read and validated
- * exactly once. A record that fails validation is reported in `unreadable`
- * rather than thrown — one corrupt row must not blank out the whole library.
+ * One pass over the store in ascending write order: every record is read and
+ * validated exactly once. A record that fails validation is reported in
+ * `unreadable` rather than thrown — one corrupt row must not blank out the
+ * whole library. Callers that show a list reverse it; the ones that write the
+ * records back out must not, or the restored order comes back inverted.
  */
 async function readAll(): Promise<{ readable: ReadRecord[]; unreadable: UnreadableWorkout[] }> {
   const db = await getDb();
@@ -70,24 +72,29 @@ async function readAll(): Promise<{ readable: ReadRecord[]; unreadable: Unreadab
     }
   }
 
-  // The index sorts by ascending write order; the library shows newest first.
-  readable.reverse();
   return { readable, unreadable };
 }
 
-/** Every saved workout, newest first, summarized for the library list. */
+/** Every saved record, newest first, summarized for the library list. */
 export async function listWorkouts(): Promise<Library> {
   const { readable, unreadable } = await readAll();
   return {
-    workouts: readable.map(({ record, workout }) => summarize(record, workout)),
-    unreadable,
+    workouts: readable.map(({ record, workout }) => summarize(record, workout)).reverse(),
+    // Reversed alongside the workouts: the two lists are shown one above the
+    // other, and ordering them opposite ways is a puzzle for the reader.
+    unreadable: [...unreadable].reverse(),
   };
 }
 
 /**
- * Everything the whole-library backup needs, newest first. Unreadable records
- * come along as their raw payload: a backup that silently dropped exactly the
- * records the user cannot otherwise reach would be the worst time to lose them.
+ * Everything the whole-library backup needs, in write order — oldest first,
+ * which is the order `putWorkouts` assigns `seq` in. Handing over the library's
+ * newest-first display order instead would restore it upside down, permanently:
+ * every restored record shares one `updatedAt`, so `seq` is the only order left.
+ *
+ * Unreadable records come along as their raw payload: a backup that silently
+ * dropped exactly the records the user cannot otherwise reach would be the
+ * worst time to lose them.
  */
 export async function readAllForBackup(): Promise<{
   workouts: Workout[];
@@ -142,10 +149,13 @@ export async function putWorkouts(
   let seq = newest?.value.seq ?? 0;
 
   const records = [
-    ...migrated.map((workout) => ({ id: workout.id, workout })),
+    // Unreadable payloads take the batch's lowest `seq`. They render no row, so
+    // giving them the newest slots would push a restored library's real
+    // workouts down the list behind rows nothing can show.
     // The record's own key is fresh; whatever id the payload carries inside is
     // already unparseable, so it is not worth trusting.
     ...unreadable.map((raw) => ({ id: crypto.randomUUID(), workout: raw as Workout })),
+    ...migrated.map((workout) => ({ id: workout.id, workout })),
   ].map(({ id, workout }) => ({
     id,
     seq: ++seq,

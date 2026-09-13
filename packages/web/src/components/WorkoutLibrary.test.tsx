@@ -107,6 +107,28 @@ describe('WorkoutLibrary', () => {
     expect(screen.queryByText('No workouts yet')).not.toBeInTheDocument();
   });
 
+  it('deletes an unreadable record, which has no row of its own', async () => {
+    const user = userEvent.setup();
+    const db = await getDb();
+    await db.put(WORKOUT_STORE, {
+      id: 'bad',
+      seq: 1,
+      updatedAt: Date.now(),
+      workout: { schemaVersion: SCHEMA_VERSION, id: 'bad', sport: 'strength' },
+    } as never);
+
+    render(<WorkoutLibrary />);
+
+    // Without this the amber banner is permanent: nothing else in the app can
+    // reach a record the library refuses to list.
+    await user.click(await screen.findByRole('button', { name: /Delete unreadable record/ }));
+    await user.click(screen.getByRole('button', { name: 'Confirm delete' }));
+
+    await waitFor(() => expect(useWorkoutStore.getState().unreadable).toEqual([]));
+    expect(screen.queryByText(/could not be read/)).not.toBeInTheDocument();
+    expect(await screen.findByText('No workouts yet')).toBeInTheDocument();
+  });
+
   it('duplicates a workout from the list', async () => {
     const user = userEvent.setup();
     await useWorkoutStore.getState().createWorkout('Push Day');
