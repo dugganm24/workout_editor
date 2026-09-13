@@ -60,7 +60,13 @@ export const WorkoutSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   sport: z.literal('strength'),
-  steps: z.array(WorkoutStepSchema).min(1),
+  /**
+   * May be empty: a freshly created workout has no steps yet, and the JSON
+   * backup has to round-trip that draft. "At least one step" is a requirement
+   * of conversion to a device format, not of storage — the first converter
+   * written needs to enforce it, since nothing here does.
+   */
+  steps: z.array(WorkoutStepSchema),
 });
 
 export type WeightTarget = z.infer<typeof WeightTargetSchema>;
@@ -73,3 +79,20 @@ export interface RepeatBlock {
 }
 export type WorkoutStep = ExerciseStep | RestStep | RepeatBlock;
 export type Workout = z.infer<typeof WorkoutSchema>;
+
+/**
+ * Leaf steps in a step tree, recursing into repeat blocks: a workout built as
+ * one block of six exercises is six steps, not one. Rounds are deliberately not
+ * multiplied in — the count says what the workout *contains*, so editing a
+ * round count does not swing it.
+ *
+ * Lives beside the schema that defines the tree so every consumer that needs to
+ * walk it — the library summary, a future duration estimate, the `src/connect/`
+ * converters — shares one definition of "descend into repeat, else leaf".
+ */
+export function countLeafSteps(steps: WorkoutStep[]): number {
+  return steps.reduce(
+    (total, step) => total + (step.kind === 'repeat' ? countLeafSteps(step.steps) : 1),
+    0,
+  );
+}
