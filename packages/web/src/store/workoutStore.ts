@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Workout } from '@workout-editor/core';
+import type { Workout, WorkoutStep } from '@workout-editor/core';
 import { errorMessage } from '../errors.ts';
 import { downloadLibraryJson, downloadWorkoutJson, parseWorkoutsFile } from '../storage/files.ts';
 import * as storage from '../storage/workouts.ts';
@@ -31,6 +31,14 @@ export interface WorkoutState {
   duplicateWorkout: (id: string) => Promise<void>;
   deleteWorkout: (id: string) => Promise<void>;
   /** Takes a reader rather than text so a failed read reports like any other import error. */
+  /**
+   * Applies a step-tree edit and saves it in the background. Synchronous on
+   * purpose: the editor renders from `currentWorkout`, so a keystroke has to
+   * land in state now, not a round trip later.
+   */
+  editSteps: (edit: (steps: WorkoutStep[]) => WorkoutStep[]) => void;
+  /** Writes a pending autosave immediately. Resolves once it has been written. */
+  flushSteps: () => Promise<void>;
   importWorkoutFile: (readFile: () => Promise<string>) => Promise<void>;
   exportWorkout: (id: string) => Promise<void>;
   exportLibrary: () => Promise<void>;
@@ -74,6 +82,8 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
    * rejected action (a blank name, say) must not make the list look broken.
    */
   function run(action: () => Promise<void>, options?: { refresh: boolean }): Promise<void> {
+    // Ahead of this action in the same queue, so it writes first.
+    void flushSave();
     set({ error: null });
     return serialize(async () => {
       try {
@@ -87,6 +97,47 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
 
   /** Reads without writing, so there is nothing to refresh afterwards. */
   const readOnly = { refresh: false } as const;
+
+  /**
+   * How long editing pauses before the workout is written. Long enough that
+   * typing a weight is one write rather than three, short enough that a user
+   * who closes the tab straight after a keystroke keeps it.
+   */
+  const AUTOSAVE_MS = 400;
+
+  let pendingSave: Workout | undefined;
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function scheduleSave(workout: Workout): void {
+    pendingSave = workout;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => void flushSave(), AUTOSAVE_MS);
+  }
+
+  /**
+   * Queues the pending write like any other action, so it cannot interleave
+   * with one. Every dispatch flushes first (see `run`): an action that reads
+   * this workout back out of storage — duplicate, export, the library's own
+   * list — must not see the state from before the last keystroke.
+   */
+  function flushSave(): Promise<void> {
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
+    const workout = pendingSave;
+    // Nothing waiting on a timer, but a write the timer already started may
+    // still be in the queue. Wait for the queue itself, so callers can treat
+    // this as "everything I typed is on disk".
+    if (!workout) return queue;
+    pendingSave = undefined;
+    return serialize(async () => {
+      try {
+        await storage.putWorkout(workout);
+        await refresh();
+      } catch (error) {
+        set({ error: errorMessage(error) });
+      }
+    });
+  }
 
   return {
     summaries: [],
@@ -122,7 +173,26 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
         set({ currentWorkout: workout });
       }, readOnly),
 
-    closeWorkout: () => set({ currentWorkout: null }),
+    closeWorkout: () => {
+      // The write already holds its own copy of the workout, so dropping the
+      // open one here cannot strand it.
+      void flushSave();
+      set({ currentWorkout: null });
+    },
+
+    editSteps: (edit) => {
+      const current = get().currentWorkout;
+      if (!current) return;
+      const steps = edit(current.steps);
+      // Reference equality: every step operation returns the tree it was given
+      // when the edit was a no-op, which must not count as a change to save.
+      if (steps === current.steps) return;
+      const next = { ...current, steps };
+      set({ currentWorkout: next, error: null });
+      scheduleSave(next);
+    },
+
+    flushSteps: () => flushSave(),
 
     renameWorkout: async (id, name) =>
       run(async () => {

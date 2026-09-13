@@ -1,17 +1,18 @@
 import { useState } from 'react';
-import type { Workout } from '@workout-editor/core';
+import { countLeafSteps, type Workout } from '@workout-editor/core';
 import { useWorkoutStore } from '../store/workoutStore.ts';
-import StepList from './StepList.tsx';
+import StepEditor, { AddStepButtons, StepEditorProvider } from './StepEditor.tsx';
 
 /**
- * Read-only view of one workout. Step editing arrives with the builder UI;
- * until then this confirms what was saved and keeps the name editable.
+ * The workout being built. Everything here edits in place and saves itself —
+ * there is no save button, and the library list updates as the writes land.
  */
-export default function WorkoutPreview({ workout }: { workout: Workout }) {
+export default function WorkoutEditor({ workout }: { workout: Workout }) {
   const closeWorkout = useWorkoutStore((s) => s.closeWorkout);
   const renameWorkout = useWorkoutStore((s) => s.renameWorkout);
   const exportWorkout = useWorkoutStore((s) => s.exportWorkout);
   const duplicateWorkout = useWorkoutStore((s) => s.duplicateWorkout);
+  const editSteps = useWorkoutStore((s) => s.editSteps);
 
   /**
    * An edit buffer, null when not editing, rather than a copy of the prop. The
@@ -20,6 +21,7 @@ export default function WorkoutPreview({ workout }: { workout: Workout }) {
    */
   const [draft, setDraft] = useState<string | null>(null);
   const name = draft ?? workout.name;
+  const stepCount = countLeafSteps(workout.steps);
 
   async function commitName() {
     if (draft === null) return;
@@ -74,11 +76,31 @@ export default function WorkoutPreview({ workout }: { workout: Workout }) {
         </div>
       </div>
 
-      <p className="rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-900">
-        This is a read-only preview. Step editing arrives with the strength workout builder.
-      </p>
+      <StepEditorProvider edit={editSteps}>
+        <div className="flex flex-col gap-4">
+          {workout.steps.length === 0 ? (
+            <p className="rounded-md border border-dashed border-gray-300 px-6 py-8 text-center text-sm text-gray-600">
+              No steps yet. Add an exercise to start building.
+            </p>
+          ) : (
+            <StepEditor steps={workout.steps} path={[]} />
+          )}
 
-      <StepList steps={workout.steps} />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <AddStepButtons steps={workout.steps} path={[]} />
+            <p className="text-sm text-gray-500">
+              {stepCount} step{stepCount === 1 ? '' : 's'}
+            </p>
+          </div>
+        </div>
+      </StepEditorProvider>
+
+      {/* The keyboard path is the point of this editor, so it is written down
+          rather than left to be discovered. */}
+      <p className="text-xs text-gray-400">
+        Enter adds the next step of the same kind · Alt+↑/↓ moves a step · Tab moves between fields
+        · changes save themselves
+      </p>
     </section>
   );
 }

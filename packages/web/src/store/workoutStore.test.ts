@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SCHEMA_VERSION } from '@workout-editor/core';
+import { insertStep, SCHEMA_VERSION, type WorkoutStep } from '@workout-editor/core';
 import { serializeLibrary, serializeWorkout } from '../storage/files.ts';
 import * as storage from '../storage/workouts.ts';
 import { newWorkout } from '../storage/workouts.ts';
@@ -11,6 +11,103 @@ const store = () => useWorkoutStore.getState();
 const asFile = (text: string) => () => Promise.resolve(text);
 
 describe('workout store', () => {
+  const squat: WorkoutStep = {
+    kind: 'exercise',
+    category: 'UNKNOWN',
+    exercise: 'Squat',
+    duration: { type: 'reps', reps: 5 },
+  };
+
+  /** Adds one step to the open workout, the way an editor row does. */
+  const addStep = (step: WorkoutStep = squat) =>
+    store().editSteps((steps) => insertStep(steps, [steps.length], step));
+
+  describe('step editing', () => {
+    it('shows the edit immediately and saves it after the pause', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await store().createWorkout('Push Day');
+        const id = store().currentWorkout!.id;
+
+        addStep();
+        // On screen straight away...
+        expect(store().currentWorkout?.steps).toHaveLength(1);
+        // ...and not yet written, so a burst of typing is one write.
+        expect((await storage.getWorkout(id))?.steps).toEqual([]);
+
+        await vi.advanceTimersByTimeAsync(500);
+        await store().flushSteps();
+        expect((await storage.getWorkout(id))?.steps).toHaveLength(1);
+        // The library's step count follows the write.
+        expect(store().summaries[0]?.stepCount).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('collapses a burst of edits into a single write', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const put = vi.spyOn(storage, 'putWorkout');
+      try {
+        await store().createWorkout('Push Day');
+        put.mockClear();
+
+        for (let i = 0; i < 5; i++) addStep();
+        await vi.advanceTimersByTimeAsync(500);
+        await store().flushSteps();
+
+        expect(put).toHaveBeenCalledTimes(1);
+        expect(store().currentWorkout?.steps).toHaveLength(5);
+      } finally {
+        put.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('writes a pending edit before an action that reads the workout back', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      addStep();
+
+      // Duplicate re-reads from storage; without the flush it would copy the
+      // workout as it was before the last keystroke.
+      await store().duplicateWorkout(id);
+
+      const copy = store().summaries.find((s) => s.name === 'Push Day (copy)');
+      expect(copy?.stepCount).toBe(1);
+    });
+
+    it('writes a pending edit when the workout is closed', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      addStep();
+
+      store().closeWorkout();
+      await store().flushSteps();
+
+      expect(store().currentWorkout).toBeNull();
+      expect((await storage.getWorkout(id))?.steps).toHaveLength(1);
+    });
+
+    it('ignores an edit that changes nothing, and one with nothing open', async () => {
+      const put = vi.spyOn(storage, 'putWorkout');
+      try {
+        // Nothing open: no crash, no write.
+        store().editSteps((steps) => [...steps, squat]);
+        expect(put).not.toHaveBeenCalled();
+
+        await store().createWorkout('Push Day');
+        put.mockClear();
+        // A step operation hands back the same array when it declines an edit.
+        store().editSteps((steps) => steps);
+        await store().flushSteps();
+        expect(put).not.toHaveBeenCalled();
+      } finally {
+        put.mockRestore();
+      }
+    });
+  });
+
   it('creates a workout, opens it, and lists it', async () => {
     await store().createWorkout('Push Day');
 

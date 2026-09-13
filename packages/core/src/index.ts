@@ -8,6 +8,21 @@ export {
   RepeatBlockSchema,
   WeightTargetSchema,
 } from './model/workout.js';
+export {
+  cloneStep,
+  duplicateStep,
+  getStep,
+  insertStep,
+  isDescendant,
+  moveStep,
+  moveStepBy,
+  pathAfter,
+  pathsEqual,
+  pruneEmptyBlocks,
+  removeStep,
+  replaceStep,
+} from './model/steps.js';
+export type { StepPath } from './model/steps.js';
 export type {
   Workout,
   WorkoutStep,

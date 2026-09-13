@@ -13,6 +13,9 @@ export async function resetApp(): Promise<void> {
   // test's state. Actions run in order, so awaiting one more waits out
   // everything queued ahead of it — `loadLibrary` is the one that changes
   // nothing and cannot reject.
+  // Cancels the autosave timer too, which no amount of draining would catch:
+  // it is not queued work yet, and would fire into the next test's database.
+  await useWorkoutStore.getState().flushSteps();
   await useWorkoutStore.getState().loadLibrary();
   await resetDb();
   useWorkoutStore.setState({
