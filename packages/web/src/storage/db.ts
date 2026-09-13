@@ -23,7 +23,14 @@ export interface WorkoutRecord {
 }
 
 export const DB_NAME = 'workout-editor';
-export const DB_VERSION = 1;
+/**
+ * Starts at 2, and there is no version 1 here to upgrade from: v1 existed only
+ * during development, so nothing that ever ran outside this repo wrote one.
+ * Numbering back down to 1 would be tidier and would lock out every browser
+ * already holding a v2 database, since IndexedDB refuses an open below the
+ * version on disk.
+ */
+export const DB_VERSION = 2;
 export const WORKOUT_STORE = 'workouts';
 export const SEQ_INDEX = 'by-seq';
 
@@ -60,9 +67,9 @@ export function getDb(): Promise<IDBPDatabase<WorkoutEditorDB>> {
 
   let blockedByOtherTab = false;
   const opening = openDB<WorkoutEditorDB>(DB_NAME, DB_VERSION, {
-    // The only version there has ever been, so this runs on creation alone. A
-    // future DB_VERSION bump has to branch on `oldVersion` here: by then the
-    // store already exists and createObjectStore would throw.
+    // Nothing upgrades into version 2 any more, so this runs on creation
+    // alone. A future DB_VERSION bump has to branch on `oldVersion` here: by
+    // then the store already exists and createObjectStore would throw.
     upgrade(db) {
       const store = db.createObjectStore(WORKOUT_STORE, { keyPath: 'id' });
       // Only `by-seq`. Nothing queries by timestamp, and an index maintained on
