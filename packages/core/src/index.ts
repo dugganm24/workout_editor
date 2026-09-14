@@ -7,6 +7,10 @@ export {
   RestStepSchema,
   RepeatBlockSchema,
   WeightTargetSchema,
+  RepsSchema,
+  SecondsSchema,
+  KilogramsSchema,
+  RoundsSchema,
 } from './model/workout.js';
 export {
   cloneStep,

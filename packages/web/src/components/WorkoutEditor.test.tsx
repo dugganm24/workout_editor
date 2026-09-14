@@ -209,6 +209,39 @@ describe('WorkoutEditor', () => {
     expect(store().currentWorkout?.steps[0]).toMatchObject({ duration: { reps: 5 } });
   });
 
+  it("refuses a whole number too large for the model's integers", async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+
+    const reps = screen.getByLabelText('Reps');
+    await user.clear(reps);
+    // Past 2^53: `Number.isInteger` says yes, the schema a save checks says no.
+    await user.type(reps, '9007199254740993');
+
+    const saved = store().currentWorkout?.steps[0];
+    expect(saved?.kind === 'exercise' && saved.duration).toMatchObject({ type: 'reps' });
+    const count =
+      saved?.kind === 'exercise' && saved.duration.type === 'reps' && saved.duration.reps;
+    expect(Number.isSafeInteger(count)).toBe(true);
+    // And the workout still saves.
+    await waitFor(async () => expect(await savedSteps()).toHaveLength(1));
+    expect(store().error).toBeNull();
+  });
+
+  it('keeps an optional value while the box holds text it cannot parse yet', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    const weight = screen.getByLabelText('Weight in kilograms');
+    await user.type(weight, '100');
+
+    // Typing "-" on the way to "-5": the browser reports an empty value, but
+    // flags it as unparseable rather than empty.
+    Object.defineProperty(weight, 'validity', { value: { badInput: true }, configurable: true });
+    fireEvent.change(weight, { target: { value: '' } });
+
+    expect(store().currentWorkout?.steps[0]).toMatchObject({ target: { kg: 100 } });
+  });
+
   it('builds a repeat block, edits inside it, and drops it when it empties', async () => {
     const user = await openEditor();
     await user.click(screen.getByRole('button', { name: '+ Repeat block' }));

@@ -3,12 +3,16 @@ import {
   duplicateStep,
   insertStep,
   isDescendant,
+  KilogramsSchema,
   moveStep,
   moveStepBy,
   pathAfter,
   pathsEqual,
   removeStep,
   replaceStep,
+  RepsSchema,
+  RoundsSchema,
+  SecondsSchema,
   type ExerciseStep,
   type RepeatBlock,
   type RestStep,
@@ -73,15 +77,22 @@ export function StepEditorProvider({
   );
 }
 
+/** Structural, so the editor needs the model's schemas but not zod itself. */
+interface NumberRule {
+  safeParse: (value: unknown) => { success: boolean };
+}
+
 /**
- * A number the model insists on: positive, and whole where the schema says so.
- * Typing passes through a draft so a half-typed value ("", "1" on the way to
- * "12") never reaches the store, where it would fail validation on save.
+ * A number the model insists on, checked against the model's own schema for
+ * that field. Typing passes through a draft so a half-typed value ("", "1" on
+ * the way to "12") never reaches the store, where it would fail validation on
+ * save and block every save after it.
  */
 function NumberField({
   label,
   value,
   suffix,
+  rule,
   integer = false,
   optional = false,
   onCommit,
@@ -89,6 +100,8 @@ function NumberField({
   label: string;
   value: number | undefined;
   suffix?: string;
+  rule: NumberRule;
+  /** Only shapes the spinner and arrow-key steps; `rule` decides what is kept. */
   integer?: boolean;
   /** Clearing the box removes the value rather than being rejected. */
   optional?: boolean;
@@ -96,15 +109,17 @@ function NumberField({
 }) {
   const [draft, setDraft] = useState<string | null>(null);
 
-  function change(text: string) {
+  function change(input: HTMLInputElement) {
+    const text = input.value;
     setDraft(text);
     if (text.trim() === '') {
-      if (optional) onCommit(undefined);
+      // A number box reports "" for text it cannot parse yet ("-", ".", "1e")
+      // as well as for an empty one. Only a truly empty box clears the value.
+      if (optional && !input.validity.badInput) onCommit(undefined);
       return;
     }
     const parsed = Number(text);
-    if (!Number.isFinite(parsed) || parsed <= 0) return;
-    if (integer && !Number.isInteger(parsed)) return;
+    if (!rule.safeParse(parsed).success) return;
     onCommit(parsed);
   }
 
@@ -118,7 +133,7 @@ function NumberField({
         aria-label={label}
         className="w-16 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none"
         value={draft ?? (value === undefined ? '' : String(value))}
-        onChange={(event) => change(event.target.value)}
+        onChange={(event) => change(event.target)}
         // The draft only exists to keep the box usable mid-edit; once focus
         // leaves, the model is the truth again and a rejected value vanishes.
         onBlur={() => setDraft(null)}
@@ -165,6 +180,7 @@ function DurationFields({ step, path }: { step: ExerciseStep | RestStep; path: S
         <NumberField
           label="Reps"
           suffix="reps"
+          rule={RepsSchema}
           integer
           value={step.duration.reps}
           onCommit={(reps) => reps !== undefined && setDuration({ type: 'reps', reps })}
@@ -174,6 +190,7 @@ function DurationFields({ step, path }: { step: ExerciseStep | RestStep; path: S
         <NumberField
           label="Seconds"
           suffix="sec"
+          rule={SecondsSchema}
           value={step.duration.seconds}
           onCommit={(seconds) => seconds !== undefined && setDuration({ type: 'time', seconds })}
         />
@@ -369,6 +386,7 @@ function ExerciseRow({ step, path }: { step: ExerciseStep; path: StepPath }) {
       <NumberField
         label="Weight in kilograms"
         suffix="kg"
+        rule={KilogramsSchema}
         optional
         value={step.target?.kg}
         onCommit={(kg) =>
@@ -402,6 +420,7 @@ function RepeatRow({ step, path }: { step: RepeatBlock; path: StepPath }) {
       <NumberField
         label="Rounds"
         suffix="×"
+        rule={RoundsSchema}
         integer
         value={step.rounds}
         onCommit={(rounds) =>
