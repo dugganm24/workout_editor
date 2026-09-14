@@ -89,6 +89,38 @@ describe('workout store', () => {
       expect((await storage.getWorkout(id))?.steps).toHaveLength(1);
     });
 
+    it('writes a pending edit when the page is hidden', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const hidden = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+      try {
+        await store().createWorkout('Push Day');
+        const id = store().currentWorkout!.id;
+        addStep();
+        // Closing the tab: the autosave timer never gets to fire. Dropping the
+        // fake clock discards it, so only the hide event can write the edit.
+        vi.useRealTimers();
+        document.dispatchEvent(new Event('visibilitychange'));
+
+        await vi.waitFor(async () => expect((await storage.getWorkout(id))?.steps).toHaveLength(1));
+      } finally {
+        hidden.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps an edit made while a rename is writing, and the new name', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+
+      const renaming = store().renameWorkout(id, 'Pull Day');
+      addStep();
+      await renaming;
+
+      expect(store().currentWorkout).toMatchObject({ name: 'Pull Day', steps: [squat] });
+      await store().flushSteps();
+      expect(await storage.getWorkout(id)).toMatchObject({ name: 'Pull Day', steps: [squat] });
+    });
+
     it('ignores an edit that changes nothing, and one with nothing open', async () => {
       const put = vi.spyOn(storage, 'putWorkout');
       try {

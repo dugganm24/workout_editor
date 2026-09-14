@@ -99,9 +99,9 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
   const readOnly = { refresh: false } as const;
 
   /**
-   * How long editing pauses before the workout is written. Long enough that
-   * typing a weight is one write rather than three, short enough that a user
-   * who closes the tab straight after a keystroke keeps it.
+   * How long editing pauses before the workout is written: long enough that
+   * typing a weight is one write rather than three. Closing the tab inside the
+   * pause is covered by the flush when the page is hidden, below.
    */
   const AUTOSAVE_MS = 400;
 
@@ -123,19 +123,30 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
   function flushSave(): Promise<void> {
     clearTimeout(saveTimer);
     saveTimer = undefined;
-    const workout = pendingSave;
     // Nothing waiting on a timer, but a write the timer already started may
     // still be in the queue. Wait for the queue itself, so callers can treat
     // this as "everything I typed is on disk".
-    if (!workout) return queue;
-    pendingSave = undefined;
+    if (!pendingSave) return queue;
     return serialize(async () => {
+      // Taken when the write runs, not when it was queued: an action ahead of
+      // it in the queue (a rename) may have updated the pending copy since.
+      const workout = pendingSave;
+      pendingSave = undefined;
+      if (!workout) return;
       try {
         await storage.putWorkout(workout);
         await refresh();
       } catch (error) {
         set({ error: errorMessage(error) });
       }
+    });
+  }
+
+  // Closing the tab or the extension page hides it first. The write is started
+  // there rather than left on a timer that will never fire.
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') void flushSave();
     });
   }
 
@@ -204,7 +215,12 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
         if (trimmed !== workout.name) {
           const renamed = { ...workout, name: trimmed };
           await storage.putWorkout(renamed);
-          if (get().currentWorkout?.id === id) set({ currentWorkout: renamed });
+          // Steps edited while this was writing are newer than the stored copy,
+          // so only the name is carried over, onto the open workout and onto
+          // its pending save; that save would otherwise write the old name back.
+          const current = get().currentWorkout;
+          if (current?.id === id) set({ currentWorkout: { ...current, name: trimmed } });
+          if (pendingSave?.id === id) pendingSave = { ...pendingSave, name: trimmed };
         }
       }),
 

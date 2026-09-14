@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useWorkoutStore } from '../store/workoutStore.ts';
 import WorkoutEditor from './WorkoutEditor.tsx';
@@ -86,6 +86,76 @@ describe('WorkoutEditor', () => {
         (await savedSteps()).map((s) => (s.kind === 'exercise' ? s.exercise : s.kind)),
       ).toEqual(['Second', 'First']),
     );
+  });
+
+  it('keeps Enter and Alt+arrow inside a block to the row they were pressed in', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.type(screen.getByLabelText('Exercise'), 'After');
+    await user.click(screen.getByRole('button', { name: '+ Repeat block' }));
+    await user.type(screen.getAllByLabelText('Exercise')[1]!, 'Inner');
+
+    // One exercise inside the block, and no second block after it.
+    await user.keyboard('{Enter}');
+    expect(store().currentWorkout?.steps).toMatchObject([
+      { exercise: 'After' },
+      { kind: 'repeat', steps: [{ exercise: 'Inner' }, { kind: 'exercise' }] },
+    ]);
+    expect(screen.getAllByLabelText('Exercise')[2]).toHaveFocus();
+
+    // Moving the new step up swaps it within the block; the block stays put.
+    await user.keyboard('{Alt>}{ArrowUp}{/Alt}');
+    expect(store().currentWorkout?.steps).toMatchObject([
+      { exercise: 'After' },
+      { kind: 'repeat', steps: [{ kind: 'exercise' }, { exercise: 'Inner' }] },
+    ]);
+    expect(screen.getAllByLabelText('Exercise')[1]).toHaveFocus();
+  });
+
+  it('leaves Enter on a row button to the button', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.type(screen.getByLabelText('Exercise'), 'Deadlift');
+
+    screen.getByRole('button', { name: 'Delete Deadlift' }).focus();
+    await user.keyboard('{Enter}');
+
+    expect(store().currentWorkout?.steps).toEqual([]);
+  });
+
+  it('keeps the cursor on a lap-press rest as it moves', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.click(screen.getByRole('button', { name: '+ Rest' }));
+    // A rest that ends on a lap press has no number box to focus.
+    await user.selectOptions(screen.getAllByLabelText('Duration type')[1]!, 'open');
+
+    await user.keyboard('{Alt>}{ArrowUp}{/Alt}');
+
+    expect(store().currentWorkout?.steps).toMatchObject([{ kind: 'rest' }, { kind: 'exercise' }]);
+    expect(screen.getAllByLabelText('Duration type')[0]).toHaveFocus();
+  });
+
+  it('highlights the row inside a block that a drag is over, not the block', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.type(screen.getByLabelText('Exercise'), 'Outer');
+    await user.click(screen.getByRole('button', { name: '+ Repeat block' }));
+    await user.type(screen.getAllByLabelText('Exercise')[1]!, 'Inner');
+
+    const handles = screen.getAllByText('⠿');
+    fireEvent.dragStart(handles[0]!);
+    const inner = screen.getAllByLabelText('Exercise')[1]!.closest('li')!;
+    const block = inner.parentElement!.closest('li')!;
+    fireEvent.dragOver(inner);
+
+    expect(inner).toHaveClass('border-gray-900');
+    expect(block).not.toHaveClass('border-gray-900');
+
+    fireEvent.drop(inner);
+    expect(store().currentWorkout?.steps).toMatchObject([
+      { kind: 'repeat', steps: [{ exercise: 'Outer' }, { exercise: 'Inner' }] },
+    ]);
   });
 
   it('duplicates and deletes a step from its own row', async () => {

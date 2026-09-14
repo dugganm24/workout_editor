@@ -85,7 +85,6 @@ function NumberField({
   integer = false,
   optional = false,
   onCommit,
-  inputRef,
 }: {
   label: string;
   value: number | undefined;
@@ -94,7 +93,6 @@ function NumberField({
   /** Clearing the box removes the value rather than being rejected. */
   optional?: boolean;
   onCommit: (value: number | undefined) => void;
-  inputRef?: React.Ref<HTMLInputElement>;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
 
@@ -114,7 +112,6 @@ function NumberField({
     <label className="flex items-baseline gap-1 text-sm">
       <span className="sr-only">{label}</span>
       <input
-        ref={inputRef}
         type="number"
         min={integer ? 1 : 0}
         step={integer ? 1 : 'any'}
@@ -132,15 +129,7 @@ function NumberField({
 }
 
 /** Reps / time / open — the three ways a step can end. */
-function DurationFields({
-  step,
-  path,
-  firstFieldRef,
-}: {
-  step: ExerciseStep | RestStep;
-  path: StepPath;
-  firstFieldRef?: React.Ref<HTMLInputElement>;
-}) {
+function DurationFields({ step, path }: { step: ExerciseStep | RestStep; path: StepPath }) {
   const { edit } = useEditor();
   const kinds =
     step.kind === 'rest' ? (['time', 'open'] as const) : (['reps', 'time', 'open'] as const);
@@ -178,7 +167,6 @@ function DurationFields({
           suffix="reps"
           integer
           value={step.duration.reps}
-          inputRef={firstFieldRef}
           onCommit={(reps) => reps !== undefined && setDuration({ type: 'reps', reps })}
         />
       )}
@@ -187,7 +175,6 @@ function DurationFields({
           label="Seconds"
           suffix="sec"
           value={step.duration.seconds}
-          inputRef={firstFieldRef}
           onCommit={(seconds) => seconds !== undefined && setDuration({ type: 'time', seconds })}
         />
       )}
@@ -262,13 +249,35 @@ function StepRow({
   label: string;
   children: React.ReactNode;
 }) {
-  const { edit, requestFocus, dragPath, setDragPath, dropPath, setDropPath } = useEditor();
+  const { edit, focusPath, requestFocus, dragPath, setDragPath, dropPath, setDropPath } =
+    useEditor();
   const index = path[path.length - 1] ?? 0;
   const isDropTarget = dropPath !== null && pathsEqual(dropPath, path);
 
+  const rowRef = useRef<HTMLLIElement>(null);
+  const wantsFocus = focusPath !== null && pathsEqual(focusPath, path);
+
+  // Focus follows the model: whichever row asked for the cursor takes it once.
+  // The first number or text box in DOM order is the row's own (a block's
+  // rounds come before its nested rows); a rest that ends on a lap press has
+  // only its select, and must still take the cursor or it is lost.
+  useEffect(() => {
+    if (!wantsFocus) return;
+    const row = rowRef.current;
+    const field = row?.querySelector('input') ?? row?.querySelector('select');
+    field?.focus();
+    if (field instanceof HTMLInputElement) field.select();
+    requestFocus(null);
+  }, [wantsFocus, requestFocus]);
+
   function keyDown(event: React.KeyboardEvent) {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    // Only from a box being typed in: Enter on a button or select is that
+    // control's own action, and must not turn into "add a step".
+    if (event.key === 'Enter' && !event.shiftKey && event.target instanceof HTMLInputElement) {
       event.preventDefault();
+      // A row inside a block sits inside the block's row too; without this the
+      // block would add a step of its own after this one.
+      event.stopPropagation();
       const next = pathAfter(path);
       edit((steps) => insertStep(steps, next, stepLike(step)));
       requestFocus(next);
@@ -276,6 +285,7 @@ function StepRow({
     }
     if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
       event.preventDefault();
+      event.stopPropagation();
       const delta = event.key === 'ArrowUp' ? -1 : 1;
       edit((steps) => moveStepBy(steps, path, delta));
       requestFocus([...path.slice(0, -1), index + delta]);
@@ -284,9 +294,14 @@ function StepRow({
 
   return (
     <li
+      ref={rowRef}
       className={`rounded-md border bg-white ${isDropTarget ? 'border-gray-900' : 'border-gray-200'}`}
       onKeyDown={keyDown}
       onDragOver={(event) => {
+        // The innermost row decides, including deciding there is no drop here:
+        // an enclosing block claiming the event would highlight itself while
+        // the drop still lands on this row.
+        event.stopPropagation();
         if (!dragPath || pathsEqual(dragPath, path)) return;
         // Into its own subtree there is nowhere to land.
         if (isDescendant(path, dragPath)) return;
@@ -327,31 +342,13 @@ function StepRow({
   );
 }
 
-/** Focus follows the model: whichever row asked for the cursor takes it once. */
-function useFocusRequest(path: StepPath): React.RefObject<HTMLInputElement | null> {
-  const { focusPath, requestFocus } = useEditor();
-  const ref = useRef<HTMLInputElement | null>(null);
-  const wanted = focusPath !== null && pathsEqual(focusPath, path);
-
-  useEffect(() => {
-    if (!wanted) return;
-    ref.current?.focus();
-    ref.current?.select();
-    requestFocus(null);
-  }, [wanted, requestFocus]);
-
-  return ref;
-}
-
 function ExerciseRow({ step, path }: { step: ExerciseStep; path: StepPath }) {
   const { edit } = useEditor();
-  const nameRef = useFocusRequest(path);
   const label = step.exercise ?? 'exercise';
 
   return (
     <StepRow step={step} path={path} label={label}>
       <input
-        ref={nameRef}
         aria-label="Exercise"
         placeholder="Exercise name"
         className="min-w-40 flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm font-medium focus:border-gray-500 focus:outline-none"
@@ -388,19 +385,16 @@ function ExerciseRow({ step, path }: { step: ExerciseStep; path: StepPath }) {
 }
 
 function RestRow({ step, path }: { step: RestStep; path: StepPath }) {
-  const firstField = useFocusRequest(path);
-
   return (
     <StepRow step={step} path={path} label="rest">
       <span className="min-w-40 flex-1 text-sm font-medium text-gray-500">Rest</span>
-      <DurationFields step={step} path={path} firstFieldRef={firstField} />
+      <DurationFields step={step} path={path} />
     </StepRow>
   );
 }
 
 function RepeatRow({ step, path }: { step: RepeatBlock; path: StepPath }) {
   const { edit } = useEditor();
-  const roundsRef = useFocusRequest(path);
 
   return (
     <StepRow step={step} path={path} label="repeat block">
@@ -410,7 +404,6 @@ function RepeatRow({ step, path }: { step: RepeatBlock; path: StepPath }) {
         suffix="×"
         integer
         value={step.rounds}
-        inputRef={roundsRef}
         onCommit={(rounds) =>
           rounds !== undefined && edit((steps) => replaceStep(steps, path, { ...step, rounds }))
         }
@@ -434,6 +427,7 @@ function TailDropZone({ steps, path }: { steps: WorkoutStep[]; path: StepPath })
       aria-hidden="true"
       className={`h-6 rounded-md border border-dashed ${active ? 'border-gray-900 bg-gray-50' : 'border-gray-200'}`}
       onDragOver={(event) => {
+        event.stopPropagation();
         if (isDescendant(tail, dragPath)) return;
         event.preventDefault();
         setDropPath(tail);
