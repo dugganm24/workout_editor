@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import type { Workout, WorkoutStep } from '@workout-editor/core';
 import { errorMessage } from '../errors.ts';
 import { downloadLibraryJson, downloadWorkoutJson, parseWorkoutsFile } from '../storage/files.ts';
+import type { WorkoutRecord } from '../storage/db.ts';
+import { migrateWorkout } from '../storage/migrate.ts';
+import { clearUnsaved, readUnsaved, stashUnsaved } from '../storage/unsaved.ts';
 import * as storage from '../storage/workouts.ts';
 import { WorkoutNotFoundError } from '../storage/workouts.ts';
 import type { UnreadableWorkout, WorkoutSummary } from '../storage/workouts.ts';
@@ -26,7 +29,8 @@ export interface WorkoutState {
   loadLibrary: () => Promise<void>;
   createWorkout: (name?: string) => Promise<void>;
   openWorkout: (id: string) => Promise<void>;
-  closeWorkout: () => void;
+  /** Writes pending edits first, and stays open if they could not be written. */
+  closeWorkout: () => Promise<void>;
   renameWorkout: (id: string, name: string) => Promise<void>;
   duplicateWorkout: (id: string) => Promise<void>;
   deleteWorkout: (id: string) => Promise<void>;
@@ -101,12 +105,14 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
   /**
    * How long editing pauses before the workout is written: long enough that
    * typing a weight is one write rather than three. Closing the tab inside the
-   * pause is covered by the flush when the page is hidden, below.
+   * pause is covered by the stash taken when the page is hidden, below.
    */
   const AUTOSAVE_MS = 400;
 
   let pendingSave: Workout | undefined;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The last autosave write failed, so its edit is still only in memory. */
+  let saveFailed = false;
 
   function scheduleSave(workout: Workout): void {
     pendingSave = workout;
@@ -133,21 +139,70 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
       const workout = pendingSave;
       pendingSave = undefined;
       if (!workout) return;
+
+      let record: WorkoutRecord;
       try {
-        await storage.putWorkout(workout);
-        await refresh();
+        record = await storage.putWorkout(workout);
       } catch (error) {
-        set({ error: errorMessage(error) });
+        // Put back unless something newer was typed meanwhile (that copy has
+        // this edit in it too), so the next edit, action or close retries the
+        // write instead of the edit existing nowhere but on screen.
+        pendingSave ??= workout;
+        saveFailed = true;
+        set({ error: `Your latest changes could not be saved. ${errorMessage(error)}` });
+        return;
       }
+
+      saveFailed = false;
+      // Anything stashed on hide is older than what was just written, unless
+      // a newer edit is still waiting, which leaves it as the only safe copy.
+      if (!pendingSave) clearUnsaved();
+      // Only this workout's summary changed. Re-reading and re-validating the
+      // whole library on every pause in typing held up the queue for nothing;
+      // the list reloads in full when the library is shown again.
+      const summary = storage.summarize(record, workout);
+      set((state) => ({
+        summaries: [summary, ...state.summaries.filter((s) => s.id !== summary.id)],
+      }));
     });
   }
 
-  // Closing the tab or the extension page hides it first. The write is started
-  // there rather than left on a timer that will never fire.
+  // Closing the tab or the extension page hides it first, and nothing async
+  // started here can be relied on to finish. The edit is stashed synchronously
+  // and written on the next load; the write is still attempted now, since a
+  // page that is only being switched away from has all the time it needs.
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') void flushSave();
+      if (document.visibilityState !== 'hidden' || !pendingSave) return;
+      stashUnsaved(pendingSave);
+      void flushSave();
     });
+  }
+
+  /** Writes an edit a closed tab left in the stash. Its own errors are its own: the library still loads. */
+  async function restoreUnsaved(): Promise<void> {
+    const raw = readUnsaved();
+    if (raw === undefined) return;
+    let workout: Workout;
+    try {
+      workout = migrateWorkout(raw);
+    } catch (error) {
+      // It will never become valid; keeping it would repeat this on every load.
+      clearUnsaved();
+      set({
+        error: `Unsaved changes from last time could not be restored. ${errorMessage(error)}`,
+      });
+      return;
+    }
+    try {
+      await storage.putWorkout(workout);
+      clearUnsaved();
+    } catch (error) {
+      // Kept for the next load: the edit is fine, the database was not.
+      set({
+        error: `Unsaved changes from last time could not be restored. ${errorMessage(error)}`,
+      });
+    }
   }
 
   return {
@@ -163,6 +218,7 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
       // user has not acted on. "Try again" clears it explicitly.
       set({ status: 'loading' });
       return serialize(async () => {
+        await restoreUnsaved();
         try {
           await refresh();
         } catch (error) {
@@ -184,10 +240,12 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
         set({ currentWorkout: workout });
       }, readOnly),
 
-    closeWorkout: () => {
-      // The write already holds its own copy of the workout, so dropping the
-      // open one here cannot strand it.
-      void flushSave();
+    closeWorkout: async () => {
+      await flushSave();
+      // The edits are on screen and nowhere else. Closing would throw them
+      // away, so the editor stays open with the error showing, and the next
+      // try at leaving retries the write.
+      if (saveFailed) return;
       set({ currentWorkout: null });
     },
 

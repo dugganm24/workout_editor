@@ -250,10 +250,11 @@ describe('WorkoutEditor', () => {
 
     const id = store().currentWorkout!.id;
     await user.click(screen.getByRole('button', { name: '← Back to library' }));
-    await store().flushSteps();
 
+    // Closing waits for the write, so it is there the moment the editor goes,
+    // well inside the autosave pause.
+    await waitFor(() => expect(store().currentWorkout).toBeNull());
     const { getWorkout } = await import('../storage/workouts.ts');
     expect((await getWorkout(id))?.steps).toMatchObject([{ exercise: 'Row' }]);
-    expect(store().currentWorkout).toBeNull();
   });
 });

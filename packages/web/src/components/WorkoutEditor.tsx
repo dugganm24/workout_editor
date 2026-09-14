@@ -38,7 +38,7 @@ export default function WorkoutEditor({ workout }: { workout: Workout }) {
         <button
           type="button"
           className="text-sm text-gray-600 underline-offset-2 hover:underline"
-          onClick={closeWorkout}
+          onClick={() => void closeWorkout()}
         >
           ← Back to library
         </button>

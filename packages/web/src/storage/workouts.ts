@@ -33,7 +33,7 @@ export interface Library {
   unreadable: UnreadableWorkout[];
 }
 
-function summarize(record: WorkoutRecord, workout: Workout): WorkoutSummary {
+export function summarize(record: WorkoutRecord, workout: Workout): WorkoutSummary {
   return {
     id: record.id,
     name: workout.name,
