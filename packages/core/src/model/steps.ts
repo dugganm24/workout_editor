@@ -1,4 +1,4 @@
-import type { RepeatBlock, WorkoutStep } from './workout.js';
+import type { WorkoutStep } from './workout.js';
 
 /**
  * Pure operations on the step tree. The editor, keyboard reordering and drag
@@ -141,7 +141,12 @@ export function moveStep(steps: WorkoutStep[], from: StepPath, to: StepPath): Wo
   if (!step || from.length === 0 || to.length === 0) return steps;
   // Into its own subtree there is no coherent answer, and the step would take
   // the tree it is being inserted into with it.
-  if (isDescendant(to, from) || pathsEqual(from, to)) return steps;
+  if (isDescendant(to, from)) return steps;
+  // The gap directly above or below a step is where it already is. Handing
+  // back the same tree is what tells the caller nothing changed, so a drop in
+  // place is not saved as an edit.
+  const destination = shiftForRemoval(from, to);
+  if (pathsEqual(destination, from)) return steps;
 
   const detached = editParent(steps, from, (siblings, index) => {
     if (!siblings[index]) return siblings;
@@ -151,7 +156,7 @@ export function moveStep(steps: WorkoutStep[], from: StepPath, to: StepPath): Wo
   });
   if (detached === steps) return steps;
 
-  return pruneEmptyBlocks(insertStep(detached, shiftForRemoval(from, to), step));
+  return pruneEmptyBlocks(insertStep(detached, destination, step));
 }
 
 /**
@@ -201,11 +206,14 @@ export function pathAfter(path: StepPath): StepPath {
   return next;
 }
 
-/** A deep copy under no shared references, so editing the copy leaves the original alone. */
+/**
+ * A deep copy under no shared references, so editing the copy leaves the
+ * original alone — its `duration` and `target` included, not just the step.
+ * Steps are plain JSON by schema (backups round-trip them that way), so a JSON
+ * round trip copies every level, including fields added after this was written.
+ */
 export function cloneStep(step: WorkoutStep): WorkoutStep {
-  if (step.kind !== 'repeat') return { ...step };
-  const block: RepeatBlock = { ...step, steps: step.steps.map(cloneStep) };
-  return block;
+  return JSON.parse(JSON.stringify(step)) as WorkoutStep;
 }
 
 export function duplicateStep(steps: WorkoutStep[], path: StepPath): WorkoutStep[] {

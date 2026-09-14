@@ -126,7 +126,12 @@ describe('moveStep', () => {
     const before = tree();
     expect(moveStep(before, [0], [0])).toBe(before);
     // Index 1 is the gap immediately below A: still above the repeat block.
-    expect(moveStep(before, [0], [1])).toEqual(before);
+    // The same tree, not an equal one, or the editor would save a non-edit.
+    expect(moveStep(before, [0], [1])).toBe(before);
+    // The last step dropped on its own list's tail, at the top and in a block.
+    expect(moveStep(before, [2], [3])).toBe(before);
+    expect(moveStep(before, [1, 1], [1, 2])).toBe(before);
+    expect(moveStep(before, [1, 0], [1, 1])).toBe(before);
   });
 
   it('moves a step into a block', () => {
@@ -217,5 +222,16 @@ describe('helpers', () => {
     const copy = cloneStep(block);
     expect(copy).toEqual(block);
     expect(copy).not.toBe(block);
+  });
+
+  it('cloneStep shares no nested objects, down to duration and target', () => {
+    const step: ExerciseStep = { ...exercise('x'), target: { type: 'weight', kg: 100 } };
+    const copy = cloneStep(step) as ExerciseStep;
+    expect(copy).toEqual(step);
+    expect(copy.duration).not.toBe(step.duration);
+    expect(copy.target).not.toBe(step.target);
+
+    const restCopy = cloneStep(rest) as RestStep;
+    expect(restCopy.duration).not.toBe(rest.duration);
   });
 });
