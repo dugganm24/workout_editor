@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Profiler } from 'react';
 import { useWorkoutStore } from '../store/workoutStore.ts';
 import WorkoutEditor from './WorkoutEditor.tsx';
 
@@ -32,6 +33,15 @@ const savedSteps = async () => {
   const { getWorkout } = await import('../storage/workouts.ts');
   return (await getWorkout(id))?.steps ?? [];
 };
+
+/** The drop zones a drag shows at the end of every list. */
+const tailZones = () => document.querySelectorAll('li.border-dashed');
+
+/** Starts a drag; the drop zones appear once `dragstart` has returned, as in a browser. */
+async function startDrag(handle: Element) {
+  fireEvent.dragStart(handle);
+  await waitFor(() => expect(tailZones().length).toBeGreaterThan(0));
+}
 
 describe('WorkoutEditor', () => {
   it('starts empty and adds a first exercise, focused and ready to name', async () => {
@@ -144,7 +154,7 @@ describe('WorkoutEditor', () => {
     await user.type(screen.getAllByLabelText('Exercise')[1]!, 'Inner');
 
     const handles = screen.getAllByText('⠿');
-    fireEvent.dragStart(handles[0]!);
+    await startDrag(handles[0]!);
     const inner = screen.getAllByLabelText('Exercise')[1]!.closest('li')!;
     const block = inner.parentElement!.closest('li')!;
     fireEvent.dragOver(inner);
@@ -213,7 +223,7 @@ describe('WorkoutEditor', () => {
 
     // Dragging the rest out to the end creates that row, without asking for focus.
     const handles = screen.getAllByText('⠿');
-    fireEvent.dragStart(handles.at(-1)!);
+    await startDrag(handles.at(-1)!);
     const tails = document.querySelectorAll('li.border-dashed');
     fireEvent.dragOver(tails[tails.length - 1]!);
     fireEvent.drop(tails[tails.length - 1]!);
@@ -233,6 +243,41 @@ describe('WorkoutEditor', () => {
     fireEvent.keyDown(screen.getByLabelText('Exercise'), { key: 'Enter', isComposing: true });
 
     expect(store().currentWorkout?.steps).toHaveLength(1);
+  });
+
+  it('changes no layout while dragstart is still being handled', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Repeat block' }));
+    await user.click(screen.getAllByRole('button', { name: '+ Exercise' }).at(-1)!);
+
+    // Chrome can cancel a drag whose handle moves during `dragstart`.
+    fireEvent.dragStart(screen.getAllByText('⠿').at(-1)!);
+    expect(tailZones()).toHaveLength(0);
+    await waitFor(() => expect(tailZones()).toHaveLength(2));
+  });
+
+  it('does not re-render the tree for every dragover on the same spot', async () => {
+    let commits = 0;
+    await store().createWorkout('Push Day');
+    render(
+      <Profiler id="editor" onRender={() => commits++}>
+        <OpenWorkout />
+      </Profiler>,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.click(screen.getByRole('button', { name: '+ Rest' }));
+
+    await startDrag(screen.getAllByText('⠿')[0]!);
+    const tail = tailZones()[0]!;
+    // Two to settle: React may render once more before it starts skipping an
+    // unchanged state, which is its own bookkeeping rather than a re-render per event.
+    fireEvent.dragOver(tail);
+    fireEvent.dragOver(tail);
+    const settled = commits;
+    for (let i = 0; i < 10; i++) fireEvent.dragOver(tail);
+
+    expect(commits).toBe(settled);
   });
 
   it('duplicates and deletes a step from its own row', async () => {

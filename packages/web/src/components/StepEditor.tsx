@@ -79,7 +79,18 @@ export function StepEditorProvider({
 }) {
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
   const [dragPath, setDragPath] = useState<StepPath | null>(null);
-  const [dropPath, setDropPath] = useState<StepPath | null>(null);
+  const [dropPath, setDropPathState] = useState<StepPath | null>(null);
+
+  // `dragover` fires every few milliseconds, and each handler builds a fresh
+  // path array. Handing the same position back as the previous state lets
+  // React skip the render; a new array every time re-rendered every row.
+  const setDropPath = useCallback(
+    (path: StepPath | null) =>
+      setDropPathState((current) =>
+        current === path || (current && path && pathsEqual(current, path)) ? current : path,
+      ),
+    [],
+  );
 
   // A request only ever names a row the edit just produced. One made for an
   // edit that changed nothing (moving the first row up) names a row that may
@@ -349,6 +360,7 @@ function StepRow({
 }) {
   const { edit, focusRequest, requestFocus, dragPath, setDragPath, dropPath, setDropPath } =
     useEditor();
+  const dragStartTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const index = path[path.length - 1] ?? 0;
   const isDropTarget = dropPath !== null && pathsEqual(dropPath, path);
 
@@ -436,8 +448,15 @@ function StepRow({
           draggable
           aria-hidden="true"
           className="cursor-grab px-1 text-gray-400 select-none"
-          onDragStart={() => setDragPath(path)}
+          onDragStart={() => {
+            // Starting a drag shows a drop zone at the end of every list, which
+            // pushes rows down. Doing that inside `dragstart` moves the handle
+            // out from under the pointer while Chrome is still deciding whether
+            // this is a drag, and it can cancel it. After it, the drag is on.
+            dragStartTimer.current = setTimeout(() => setDragPath(path));
+          }}
           onDragEnd={() => {
+            clearTimeout(dragStartTimer.current);
             setDragPath(null);
             setDropPath(null);
           }}
