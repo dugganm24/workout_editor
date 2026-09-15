@@ -142,9 +142,14 @@ interface NumberRule {
 
 /**
  * A number the model insists on, checked against the model's own schema for
- * that field. Typing passes through a draft so a half-typed value ("", "1" on
- * the way to "12") never reaches the store, where it would fail validation on
- * save and block every save after it.
+ * that field. Each value the rule accepts is committed as it is typed, so an
+ * autosave or an Enter that adds the next step never loses it. Text the rule
+ * rejects ("", "0", "7.5" reps) stays in a draft, marked invalid, and never
+ * reaches the store, where it would fail validation on save.
+ *
+ * Leaving the box with a rejected draft puts back the value it had when focus
+ * arrived. Otherwise backing "12" out to "1" and then "", and tabbing away,
+ * would keep the 1 the user only passed through on the way.
  */
 function NumberField({
   label,
@@ -166,19 +171,46 @@ function NumberField({
   onCommit: (value: number | undefined) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  /** The value when focus arrived, and the last one this box committed. */
+  const editing = useRef<{ original: number | undefined; committed: number | undefined } | null>(
+    null,
+  );
+  const invalid = draft !== null && !accepts(draft);
+
+  function accepts(text: string): boolean {
+    return text.trim() === '' ? optional : rule.safeParse(Number(text)).success;
+  }
+
+  function commit(next: number | undefined) {
+    if (editing.current) editing.current.committed = next;
+    onCommit(next);
+  }
 
   function change(input: HTMLInputElement) {
     const text = input.value;
     setDraft(text);
+    // A number box reports "" for text it cannot parse yet ("-", ".", "1e") as
+    // well as for an empty one. Only a truly empty box counts as cleared.
+    if (input.validity.badInput) return;
     if (text.trim() === '') {
-      // A number box reports "" for text it cannot parse yet ("-", ".", "1e")
-      // as well as for an empty one. Only a truly empty box clears the value.
-      if (optional && !input.validity.badInput) onCommit(undefined);
+      if (optional) commit(undefined);
       return;
     }
     const parsed = Number(text);
-    if (!rule.safeParse(parsed).success) return;
-    onCommit(parsed);
+    if (rule.safeParse(parsed).success) commit(parsed);
+  }
+
+  function blur(input: HTMLInputElement) {
+    const session = editing.current;
+    editing.current = null;
+    setDraft(null);
+    if (!session) return;
+    const rejected = input.validity.badInput || (draft !== null && !accepts(draft));
+    // Rows are keyed by position, so a box whose value is no longer the one it
+    // committed is now showing a different step (Alt+arrow moved its own):
+    // putting anything back would write into that step.
+    if (!rejected || value !== session.committed) return;
+    if (session.original !== value) onCommit(session.original);
   }
 
   return (
@@ -189,12 +221,16 @@ function NumberField({
         min={integer ? 1 : 0}
         step={integer ? 1 : 'any'}
         aria-label={label}
-        className="w-16 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none"
+        aria-invalid={invalid || undefined}
+        className={`w-16 rounded-md border px-2 py-1 text-sm focus:outline-none ${
+          invalid ? 'border-red-500 focus:border-red-600' : 'border-gray-300 focus:border-gray-500'
+        }`}
         value={draft ?? (value === undefined ? '' : String(value))}
+        onFocus={() => {
+          editing.current = { original: value, committed: value };
+        }}
         onChange={(event) => change(event.target)}
-        // The draft only exists to keep the box usable mid-edit; once focus
-        // leaves, the model is the truth again and a rejected value vanishes.
-        onBlur={() => setDraft(null)}
+        onBlur={(event) => blur(event.target)}
       />
       {suffix && <span className="text-gray-500">{suffix}</span>}
     </label>

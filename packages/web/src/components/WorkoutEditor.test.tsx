@@ -352,6 +352,32 @@ describe('WorkoutEditor', () => {
     expect(store().currentWorkout?.steps[0]).toMatchObject({ duration: { reps: 5 } });
   });
 
+  it('puts a number back when the box is left holding a value it rejected', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    const reps = screen.getByLabelText('Reps');
+    await user.clear(reps);
+    await user.type(reps, '12');
+    await user.tab();
+
+    // Backing out passes through 1, which the rule accepts, on the way to "".
+    await user.click(reps);
+    await user.keyboard('{Backspace}{Backspace}');
+    expect(reps).toHaveAttribute('aria-invalid', 'true');
+    await user.tab();
+
+    expect(reps).toHaveValue(12);
+    expect(reps).not.toHaveAttribute('aria-invalid');
+    expect(store().currentWorkout?.steps[0]).toMatchObject({ duration: { reps: 12 } });
+
+    // A value the box accepts is kept on leaving, including an optional one cleared.
+    const weight = screen.getByLabelText('Weight in kilograms');
+    await user.type(weight, '100');
+    await user.clear(weight);
+    await user.tab();
+    expect(store().currentWorkout?.steps[0]).not.toHaveProperty('target.kg');
+  });
+
   it("refuses a whole number too large for the model's integers", async () => {
     const user = await openEditor();
     await user.click(screen.getByRole('button', { name: '+ Exercise' }));
