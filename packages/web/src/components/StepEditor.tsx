@@ -1,6 +1,7 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
   duplicateStep,
+  getStep,
   insertStep,
   isDescendant,
   KilogramsSchema,
@@ -34,11 +35,23 @@ import { newExerciseStep, newRepeatBlock, newRestStep, stepLike } from './stepDe
 
 type Edit = (steps: WorkoutStep[]) => WorkoutStep[];
 
+/**
+ * Where the cursor goes once the tree re-renders. `control` is the position of
+ * a control among the row's own (see `ownControls`): a moved row keeps focus on
+ * whichever control moved it. Without one, the row's first field takes it, as
+ * a freshly added row should.
+ */
+interface FocusRequest {
+  path: StepPath;
+  control?: number;
+}
+
 interface EditorApi {
-  edit: (mutate: Edit) => void;
+  /** Applies an edit. False when it changed nothing, so there is nothing to follow with the cursor. */
+  edit: (mutate: Edit) => boolean;
   /** The row that should take the cursor once it renders, then be forgotten. */
-  focusPath: StepPath | null;
-  requestFocus: (path: StepPath | null) => void;
+  focusRequest: FocusRequest | null;
+  requestFocus: (path: StepPath | null, control?: number) => void;
   dragPath: StepPath | null;
   setDragPath: (path: StepPath | null) => void;
   dropPath: StepPath | null;
@@ -64,13 +77,41 @@ export function StepEditorProvider({
   edit: (mutate: Edit) => void;
   children: React.ReactNode;
 }) {
-  const [focusPath, requestFocus] = useState<StepPath | null>(null);
+  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
   const [dragPath, setDragPath] = useState<StepPath | null>(null);
   const [dropPath, setDropPath] = useState<StepPath | null>(null);
 
+  // A request only ever names a row the edit just produced. One made for an
+  // edit that changed nothing (moving the first row up) names a row that may
+  // not exist, and would sit there until some later edit created it and it
+  // stole the cursor; `edit` reporting "no change" is what prevents that.
+  function applyEdit(mutate: Edit): boolean {
+    let changed = false;
+    edit((steps) => {
+      const next = mutate(steps);
+      changed = next !== steps;
+      return next;
+    });
+    return changed;
+  }
+
+  const requestFocus = useCallback(
+    (path: StepPath | null, control?: number) =>
+      setFocusRequest(path === null ? null : { path, control }),
+    [],
+  );
+
   return (
     <EditorContext.Provider
-      value={{ edit, focusPath, requestFocus, dragPath, setDragPath, dropPath, setDropPath }}
+      value={{
+        edit: applyEdit,
+        focusRequest,
+        requestFocus,
+        dragPath,
+        setDragPath,
+        dropPath,
+        setDropPath,
+      }}
     >
       {children}
     </EditorContext.Provider>
@@ -199,9 +240,48 @@ function DurationFields({ step, path }: { step: ExerciseStep | RestStep; path: S
   );
 }
 
+/**
+ * The controls that belong to a row itself, in DOM order — not those of rows
+ * nested inside it. The same step renders the same list wherever it moves to,
+ * so a position in it names the same control after a move.
+ */
+function ownControls(row: Element): HTMLElement[] {
+  return [...row.querySelectorAll<HTMLElement>('input, select, button')].filter(
+    (control) => control.closest('li') === row,
+  );
+}
+
+function controlIndex(control: Element): number | undefined {
+  const row = control.closest('li');
+  const index = row ? ownControls(row).indexOf(control as HTMLElement) : -1;
+  return index === -1 ? undefined : index;
+}
+
+/**
+ * After a delete, the cursor goes to the step that took the deleted one's place,
+ * else the one before it, else up a level (a block emptied by the delete is
+ * gone too). Never left on the Delete button: rows are keyed by position, so
+ * that button now belongs to the next step, and a second Enter would delete it.
+ */
+function focusAfterRemoval(steps: WorkoutStep[], path: StepPath): StepPath | null {
+  for (let at = path; at.length > 0; at = at.slice(0, -1)) {
+    if (getStep(steps, at)) return at;
+    const index = at[at.length - 1] ?? 0;
+    const before = [...at.slice(0, -1), index - 1];
+    if (index > 0 && getStep(steps, before)) return before;
+  }
+  return null;
+}
+
 function RowActions({ path, label }: { path: StepPath; label: string }) {
   const { edit, requestFocus } = useEditor();
   const index = path[path.length - 1] ?? 0;
+
+  function move(delta: number, button: Element) {
+    if (edit((steps) => moveStepBy(steps, path, delta))) {
+      requestFocus([...path.slice(0, -1), index + delta], controlIndex(button));
+    }
+  }
 
   return (
     <div className="flex items-center gap-1">
@@ -209,10 +289,7 @@ function RowActions({ path, label }: { path: StepPath; label: string }) {
         type="button"
         aria-label={`Move ${label} up`}
         className="rounded-md border border-gray-300 px-1.5 py-1 text-xs hover:bg-gray-50"
-        onClick={() => {
-          edit((steps) => moveStepBy(steps, path, -1));
-          requestFocus([...path.slice(0, -1), index - 1]);
-        }}
+        onClick={(event) => move(-1, event.currentTarget)}
       >
         ↑
       </button>
@@ -220,10 +297,7 @@ function RowActions({ path, label }: { path: StepPath; label: string }) {
         type="button"
         aria-label={`Move ${label} down`}
         className="rounded-md border border-gray-300 px-1.5 py-1 text-xs hover:bg-gray-50"
-        onClick={() => {
-          edit((steps) => moveStepBy(steps, path, 1));
-          requestFocus([...path.slice(0, -1), index + 1]);
-        }}
+        onClick={(event) => move(1, event.currentTarget)}
       >
         ↓
       </button>
@@ -232,8 +306,7 @@ function RowActions({ path, label }: { path: StepPath; label: string }) {
         aria-label={`Duplicate ${label}`}
         className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
         onClick={() => {
-          edit((steps) => duplicateStep(steps, path));
-          requestFocus(pathAfter(path));
+          if (edit((steps) => duplicateStep(steps, path))) requestFocus(pathAfter(path));
         }}
       >
         Duplicate
@@ -242,7 +315,15 @@ function RowActions({ path, label }: { path: StepPath; label: string }) {
         type="button"
         aria-label={`Delete ${label}`}
         className="rounded-md border border-gray-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50"
-        onClick={() => edit((steps) => removeStep(steps, path))}
+        onClick={() => {
+          let next: StepPath | null = null;
+          const changed = edit((steps) => {
+            const after = removeStep(steps, path);
+            next = focusAfterRemoval(after, path);
+            return after;
+          });
+          if (changed) requestFocus(next);
+        }}
       >
         Delete
       </button>
@@ -266,46 +347,59 @@ function StepRow({
   label: string;
   children: React.ReactNode;
 }) {
-  const { edit, focusPath, requestFocus, dragPath, setDragPath, dropPath, setDropPath } =
+  const { edit, focusRequest, requestFocus, dragPath, setDragPath, dropPath, setDropPath } =
     useEditor();
   const index = path[path.length - 1] ?? 0;
   const isDropTarget = dropPath !== null && pathsEqual(dropPath, path);
 
   const rowRef = useRef<HTMLLIElement>(null);
-  const wantsFocus = focusPath !== null && pathsEqual(focusPath, path);
+  const focusHere = focusRequest && pathsEqual(focusRequest.path, path) ? focusRequest : null;
 
   // Focus follows the model: whichever row asked for the cursor takes it once.
-  // The first number or text box in DOM order is the row's own (a block's
-  // rounds come before its nested rows); a rest that ends on a lap press has
-  // only its select, and must still take the cursor or it is lost.
   useEffect(() => {
-    if (!wantsFocus) return;
-    const row = rowRef.current;
-    const field = row?.querySelector('input') ?? row?.querySelector('select');
-    field?.focus();
-    if (field instanceof HTMLInputElement) field.select();
+    if (!focusHere || !rowRef.current) return;
+    const controls = ownControls(rowRef.current);
+    if (focusHere.control !== undefined) {
+      // A moved row: the control that moved it keeps the cursor, and its text
+      // stays as it was, so the next keystroke does not overwrite a field.
+      controls[focusHere.control]?.focus();
+    } else {
+      // A new row: its first box, ready to type over. A rest that ends on a
+      // lap press has only its select, and must still take the cursor.
+      const field =
+        controls.find((control) => control instanceof HTMLInputElement) ??
+        controls.find((control) => control instanceof HTMLSelectElement);
+      field?.focus();
+      if (field instanceof HTMLInputElement) field.select();
+    }
     requestFocus(null);
-  }, [wantsFocus, requestFocus]);
+  }, [focusHere, requestFocus]);
 
   function keyDown(event: React.KeyboardEvent) {
     // Only from a box being typed in: Enter on a button or select is that
     // control's own action, and must not turn into "add a step".
-    if (event.key === 'Enter' && !event.shiftKey && event.target instanceof HTMLInputElement) {
+    if (
+      event.key === 'Enter' &&
+      !event.shiftKey &&
+      // The Enter that confirms an IME candidate belongs to the composition.
+      !event.nativeEvent.isComposing &&
+      event.target instanceof HTMLInputElement
+    ) {
       event.preventDefault();
       // A row inside a block sits inside the block's row too; without this the
       // block would add a step of its own after this one.
       event.stopPropagation();
       const next = pathAfter(path);
-      edit((steps) => insertStep(steps, next, stepLike(step)));
-      requestFocus(next);
+      if (edit((steps) => insertStep(steps, next, stepLike(step)))) requestFocus(next);
       return;
     }
     if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
       event.preventDefault();
       event.stopPropagation();
       const delta = event.key === 'ArrowUp' ? -1 : 1;
-      edit((steps) => moveStepBy(steps, path, delta));
-      requestFocus([...path.slice(0, -1), index + delta]);
+      if (edit((steps) => moveStepBy(steps, path, delta))) {
+        requestFocus([...path.slice(0, -1), index + delta], controlIndex(event.target as Element));
+      }
     }
   }
 
@@ -470,8 +564,7 @@ export function AddStepButtons({ steps, path }: { steps: WorkoutStep[]; path: St
   const nested = path.length > 0;
 
   function add(step: WorkoutStep) {
-    edit((current) => insertStep(current, where, step));
-    requestFocus(where);
+    if (edit((current) => insertStep(current, where, step))) requestFocus(where);
   }
 
   return (

@@ -158,6 +158,83 @@ describe('WorkoutEditor', () => {
     ]);
   });
 
+  it('moves the cursor off Delete, so a second Enter cannot delete the next step', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.type(screen.getByLabelText('Exercise'), 'Bench');
+    await user.keyboard('{Enter}');
+    await user.type(screen.getAllByLabelText('Exercise')[1]!, 'Squat');
+
+    screen.getByRole('button', { name: 'Delete Bench' }).focus();
+    await user.keyboard('{Enter}');
+
+    expect(exerciseNames()).toEqual(['Squat']);
+    // The step that took its place, not that step's own Delete button.
+    expect(screen.getByLabelText('Exercise')).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(exerciseNames()).toEqual(['Squat', '']);
+  });
+
+  it('keeps the cursor on the control that moved a step', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.type(screen.getByLabelText('Exercise'), 'First');
+    await user.keyboard('{Enter}');
+    await user.type(screen.getAllByLabelText('Exercise')[1]!, 'Second');
+
+    // The button keeps the cursor, so Enter presses it again rather than adding
+    // a step from the name box (here it is last, so nothing moves).
+    await user.click(screen.getByRole('button', { name: 'Move First down' }));
+    expect(exerciseNames()).toEqual(['Second', 'First']);
+    expect(screen.getByRole('button', { name: 'Move First down' })).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(exerciseNames()).toEqual(['Second', 'First']);
+
+    // A field: the weight box stays focused, and typing does not replace the name.
+    const weight = screen.getAllByLabelText('Weight in kilograms')[1]!;
+    await user.click(weight);
+    await user.keyboard('{Alt>}{ArrowUp}{/Alt}');
+    expect(screen.getAllByLabelText('Weight in kilograms')[0]).toHaveFocus();
+    await user.keyboard('5');
+    expect(exerciseNames()).toEqual(['First', 'Second']);
+    expect(store().currentWorkout?.steps[0]).toMatchObject({ target: { kg: 5 } });
+  });
+
+  it('does not leave a focus request behind when a move changes nothing', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.click(screen.getByRole('button', { name: '+ Repeat block' }));
+    await user.click(screen.getAllByRole('button', { name: '+ Rest' })[0]!);
+
+    // The block is last: moving it down changes nothing, and must not queue
+    // the cursor for a row at [2] that does not exist yet.
+    await user.click(screen.getByLabelText('Rounds'));
+    await user.keyboard('{Alt>}{ArrowDown}{/Alt}');
+
+    // Dragging the rest out to the end creates that row, without asking for focus.
+    const handles = screen.getAllByText('⠿');
+    fireEvent.dragStart(handles.at(-1)!);
+    const tails = document.querySelectorAll('li.border-dashed');
+    fireEvent.dragOver(tails[tails.length - 1]!);
+    fireEvent.drop(tails[tails.length - 1]!);
+
+    expect(store().currentWorkout?.steps.map((s) => s.kind)).toEqual([
+      'exercise',
+      'repeat',
+      'rest',
+    ]);
+    expect(screen.getAllByLabelText('Seconds').at(-1)).not.toHaveFocus();
+  });
+
+  it('leaves the Enter that confirms an IME candidate to the composition', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+
+    fireEvent.keyDown(screen.getByLabelText('Exercise'), { key: 'Enter', isComposing: true });
+
+    expect(store().currentWorkout?.steps).toHaveLength(1);
+  });
+
   it('duplicates and deletes a step from its own row', async () => {
     const user = await openEditor();
     await user.click(screen.getByRole('button', { name: '+ Exercise' }));
