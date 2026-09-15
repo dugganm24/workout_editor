@@ -13,6 +13,9 @@ export default function WorkoutEditor({ workout }: { workout: Workout }) {
   const exportWorkout = useWorkoutStore((s) => s.exportWorkout);
   const duplicateWorkout = useWorkoutStore((s) => s.duplicateWorkout);
   const editSteps = useWorkoutStore((s) => s.editSteps);
+  const saveError = useWorkoutStore((s) => s.saveError);
+  const flushSteps = useWorkoutStore((s) => s.flushSteps);
+  const discardChanges = useWorkoutStore((s) => s.discardChanges);
 
   /**
    * An edit buffer, null when not editing, rather than a copy of the prop. The
@@ -43,6 +46,28 @@ export default function WorkoutEditor({ workout }: { workout: Workout }) {
           ← Back to library
         </button>
       </div>
+
+      {/* Stands until the edits are written or discarded: unlike the app's
+          one-off error banner, it describes a state the workout is still in. */}
+      {saveError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-red-50 px-4 py-3 text-sm text-red-800"
+        >
+          <span>
+            Your latest changes have not been saved: {saveError}. They are kept on this page and
+            retried as you edit.
+          </span>
+          <div className="flex gap-3">
+            <button type="button" className="underline" onClick={() => void flushSteps()}>
+              Try again
+            </button>
+            <button type="button" className="underline" onClick={discardChanges}>
+              Discard changes
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <label className="flex-1">

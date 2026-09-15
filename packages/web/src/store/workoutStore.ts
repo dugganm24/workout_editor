@@ -4,7 +4,13 @@ import { errorMessage } from '../errors.ts';
 import { downloadLibraryJson, downloadWorkoutJson, parseWorkoutsFile } from '../storage/files.ts';
 import type { WorkoutRecord } from '../storage/db.ts';
 import { migrateWorkout } from '../storage/migrate.ts';
-import { clearUnsaved, readUnsaved, stashUnsaved } from '../storage/unsaved.ts';
+import {
+  abandonedCopies,
+  clearUnsaved,
+  discardCopy,
+  stashUnsaved,
+  type UnsavedCopy,
+} from '../storage/unsaved.ts';
 import * as storage from '../storage/workouts.ts';
 import { WorkoutNotFoundError } from '../storage/workouts.ts';
 import type { UnreadableWorkout, WorkoutSummary } from '../storage/workouts.ts';
@@ -25,12 +31,21 @@ export interface WorkoutState {
   currentWorkout: Workout | null;
   status: LibraryStatus;
   error: string | null;
+  /**
+   * Why the open workout's latest edits could not be written, while they
+   * still have not been. Kept apart from `error` because it is not a one-off:
+   * it stands until a retry succeeds or the edits are discarded, and an edit
+   * made meanwhile must not dismiss it.
+   */
+  saveError: string | null;
 
   loadLibrary: () => Promise<void>;
   createWorkout: (name?: string) => Promise<void>;
   openWorkout: (id: string) => Promise<void>;
   /** Writes pending edits first, and stays open if they could not be written. */
   closeWorkout: () => Promise<void>;
+  /** Drops edits that could not be saved, and closes the workout. */
+  discardChanges: () => void;
   renameWorkout: (id: string, name: string) => Promise<void>;
   duplicateWorkout: (id: string) => Promise<void>;
   deleteWorkout: (id: string) => Promise<void>;
@@ -104,18 +119,29 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
 
   /**
    * How long editing pauses before the workout is written: long enough that
-   * typing a weight is one write rather than three. Closing the tab inside the
-   * pause is covered by the stash taken when the page is hidden, below.
+   * typing a weight is one write rather than three. A tab closed before the
+   * write finishes leaves a safety copy behind (see `storage/unsaved.ts`).
    */
   const AUTOSAVE_MS = 400;
 
-  let pendingSave: Workout | undefined;
-  let saveTimer: ReturnType<typeof setTimeout> | undefined;
-  /** The last autosave write failed, so its edit is still only in memory. */
-  let saveFailed = false;
+  interface PendingSave {
+    workout: Workout;
+    /** Of its safety copy, which is removed only once this version is written. */
+    version: number;
+  }
 
-  function scheduleSave(workout: Workout): void {
-    pendingSave = workout;
+  let pendingSave: PendingSave | undefined;
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Bumped by a discard, so a write already under way cannot resurrect what was discarded. */
+  let discards = 0;
+
+  /**
+   * The one way the open workout changes: on screen now, copied to the safety
+   * store now, written after the pause.
+   */
+  function updateCurrent(workout: Workout): void {
+    set({ currentWorkout: workout });
+    pendingSave = { workout, version: stashUnsaved(workout) };
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => void flushSave(), AUTOSAVE_MS);
   }
@@ -134,74 +160,91 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
     // this as "everything I typed is on disk".
     if (!pendingSave) return queue;
     return serialize(async () => {
-      // Taken when the write runs, not when it was queued: an action ahead of
-      // it in the queue (a rename) may have updated the pending copy since.
-      const workout = pendingSave;
+      // Taken when the write runs, not when it was queued, so it is always the
+      // newest edit.
+      const save = pendingSave;
       pendingSave = undefined;
-      if (!workout) return;
+      if (!save) return;
+      const discardsAtStart = discards;
 
       let record: WorkoutRecord;
       try {
-        record = await storage.putWorkout(workout);
+        record = await storage.putWorkout(save.workout);
       } catch (error) {
+        if (discardsAtStart !== discards) return;
         // Put back unless something newer was typed meanwhile (that copy has
-        // this edit in it too), so the next edit, action or close retries the
-        // write instead of the edit existing nowhere but on screen.
-        pendingSave ??= workout;
-        saveFailed = true;
-        set({ error: `Your latest changes could not be saved. ${errorMessage(error)}` });
+        // this edit in it too), so the next edit, close or "Try again" retries
+        // the write instead of the edit existing nowhere but on screen.
+        pendingSave ??= save;
+        set({ saveError: errorMessage(error) });
         return;
       }
 
-      saveFailed = false;
-      // Anything stashed on hide is older than what was just written, unless
-      // a newer edit is still waiting, which leaves it as the only safe copy.
-      if (!pendingSave) clearUnsaved();
+      clearUnsaved(save.workout.id, save.version);
+      if (get().saveError !== null) set({ saveError: null });
       // Only this workout's summary changed. Re-reading and re-validating the
       // whole library on every pause in typing held up the queue for nothing;
       // the list reloads in full when the library is shown again.
-      const summary = storage.summarize(record, workout);
+      const summary = storage.summarize(record, save.workout);
       set((state) => ({
         summaries: [summary, ...state.summaries.filter((s) => s.id !== summary.id)],
       }));
     });
   }
 
-  // Closing the tab or the extension page hides it first, and nothing async
-  // started here can be relied on to finish. The edit is stashed synchronously
-  // and written on the next load; the write is still attempted now, since a
-  // page that is only being switched away from has all the time it needs.
+  // A page that is only being switched away from has all the time it needs,
+  // so start the write now rather than leave it to a timer. A page that is
+  // closing may not finish it; its safety copy covers that.
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState !== 'hidden' || !pendingSave) return;
-      stashUnsaved(pendingSave);
-      void flushSave();
+      if (document.visibilityState === 'hidden') void flushSave();
     });
   }
 
-  /** Writes an edit a closed tab left in the stash. Its own errors are its own: the library still loads. */
-  async function restoreUnsaved(): Promise<void> {
-    const raw = readUnsaved();
-    if (raw === undefined) return;
+  /**
+   * Writes one copy left by a closed tab. It never overwrites a newer write:
+   * if the workout has been saved since the edit was made (from another tab,
+   * say), the copy is kept as a separate workout for the user to compare.
+   */
+  async function restoreCopy(copy: UnsavedCopy): Promise<void> {
     let workout: Workout;
     try {
-      workout = migrateWorkout(raw);
+      workout = migrateWorkout(copy.workout);
     } catch (error) {
       // It will never become valid; keeping it would repeat this on every load.
-      clearUnsaved();
-      set({
-        error: `Unsaved changes from last time could not be restored. ${errorMessage(error)}`,
-      });
+      discardCopy(copy);
+      throw error;
+    }
+
+    const stored = await storage.getStoredWorkout(workout.id);
+    if (!stored) {
+      // Deleted since. Bringing it back would undo a delete the user made.
+      discardCopy(copy);
       return;
     }
-    try {
-      await storage.putWorkout(workout);
-      clearUnsaved();
-    } catch (error) {
-      // Kept for the next load: the edit is fine, the database was not.
-      set({
-        error: `Unsaved changes from last time could not be restored. ${errorMessage(error)}`,
-      });
+    // The tab closed after its write landed but before it removed the copy.
+    if (JSON.stringify(stored.workout) === JSON.stringify(workout)) {
+      discardCopy(copy);
+      return;
+    }
+    await storage.putWorkout(
+      stored.updatedAt > copy.editedAt
+        ? storage.copyWorkout(workout, `${workout.name} (recovered)`)
+        : workout,
+    );
+    discardCopy(copy);
+  }
+
+  /** Its errors are its own: the library still loads. A copy that failed to write stays for next time. */
+  async function restoreAbandoned(): Promise<void> {
+    for (const copy of await abandonedCopies()) {
+      try {
+        await restoreCopy(copy);
+      } catch (error) {
+        set({
+          error: `Unsaved changes from a closed tab could not be restored. ${errorMessage(error)}`,
+        });
+      }
     }
   }
 
@@ -211,6 +254,7 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
     currentWorkout: null,
     status: 'loading',
     error: null,
+    saveError: null,
 
     loadLibrary: async () => {
       // `error` is deliberately left alone: this runs on every mount, and
@@ -218,7 +262,7 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
       // user has not acted on. "Try again" clears it explicitly.
       set({ status: 'loading' });
       return serialize(async () => {
-        await restoreUnsaved();
+        await restoreAbandoned();
         try {
           await refresh();
         } catch (error) {
@@ -242,11 +286,21 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
 
     closeWorkout: async () => {
       await flushSave();
-      // The edits are on screen and nowhere else. Closing would throw them
-      // away, so the editor stays open with the error showing, and the next
-      // try at leaving retries the write.
-      if (saveFailed) return;
+      // The edits are on screen and nowhere else, so closing would throw them
+      // away. The editor stays open with the save error and its choices:
+      // try again, or discard them.
+      if (get().saveError !== null) return;
       set({ currentWorkout: null });
+    },
+
+    discardChanges: () => {
+      const current = get().currentWorkout;
+      clearTimeout(saveTimer);
+      saveTimer = undefined;
+      pendingSave = undefined;
+      discards++;
+      if (current) clearUnsaved(current.id);
+      set({ currentWorkout: null, saveError: null });
     },
 
     editSteps: (edit) => {
@@ -256,31 +310,33 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
       // Reference equality: every step operation returns the tree it was given
       // when the edit was a no-op, which must not count as a change to save.
       if (steps === current.steps) return;
-      const next = { ...current, steps };
-      set({ currentWorkout: next, error: null });
-      scheduleSave(next);
+      if (get().error !== null) set({ error: null });
+      updateCurrent({ ...current, steps });
     },
 
     flushSteps: () => flushSave(),
 
-    renameWorkout: async (id, name) =>
-      run(async () => {
-        const trimmed = name.trim();
+    renameWorkout: async (id, name) => {
+      const trimmed = name.trim();
+      const current = get().currentWorkout;
+      // The open workout is renamed like any other edit to it: in memory, then
+      // saved with its steps. Writing the stored record instead would make two
+      // copies of the truth that every later edit would have to reconcile.
+      // A blank name takes the queued path below, so its complaint lands in
+      // order with other actions dispatched alongside it.
+      if (trimmed && current?.id === id) {
+        set({ error: null });
+        // A no-op rename must not bump the write order, which would reorder the library.
+        if (trimmed !== current.name) updateCurrent({ ...current, name: trimmed });
+        return flushSave();
+      }
+      return run(async () => {
         if (!trimmed) throw new Error('A workout needs a name.');
         const workout = await storage.getWorkout(id);
         if (!workout) throw new WorkoutNotFoundError();
-        // A no-op rename must not bump the write order, which would reorder the library.
-        if (trimmed !== workout.name) {
-          const renamed = { ...workout, name: trimmed };
-          await storage.putWorkout(renamed);
-          // Steps edited while this was writing are newer than the stored copy,
-          // so only the name is carried over, onto the open workout and onto
-          // its pending save; that save would otherwise write the old name back.
-          const current = get().currentWorkout;
-          if (current?.id === id) set({ currentWorkout: { ...current, name: trimmed } });
-          if (pendingSave?.id === id) pendingSave = { ...pendingSave, name: trimmed };
-        }
-      }),
+        if (trimmed !== workout.name) await storage.putWorkout({ ...workout, name: trimmed });
+      });
+    },
 
     duplicateWorkout: async (id) =>
       run(async () => {

@@ -106,9 +106,18 @@ export async function readAllForBackup(): Promise<{
 
 /** Throws if the stored record is invalid — callers opening a workout need to know. */
 export async function getWorkout(id: string): Promise<Workout | undefined> {
+  return (await getStoredWorkout(id))?.workout;
+}
+
+/** `getWorkout` plus when it was last written, for callers deciding whether they hold something newer. */
+export async function getStoredWorkout(
+  id: string,
+): Promise<{ workout: Workout; updatedAt: number } | undefined> {
   const db = await getDb();
   const record = await db.get(WORKOUT_STORE, id);
-  return record ? migrateWorkout(record.workout) : undefined;
+  return record
+    ? { workout: migrateWorkout(record.workout), updatedAt: record.updatedAt }
+    : undefined;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { resetDb } from './storage/testing.ts';
-import { clearUnsaved } from './storage/unsaved.ts';
+import { clearAllUnsaved } from './storage/unsaved.ts';
 import { useWorkoutStore } from './store/workoutStore.ts';
 
 /**
@@ -19,12 +19,13 @@ export async function resetApp(): Promise<void> {
   await useWorkoutStore.getState().flushSteps();
   await useWorkoutStore.getState().loadLibrary();
   await resetDb();
-  clearUnsaved();
+  clearAllUnsaved();
   useWorkoutStore.setState({
     summaries: [],
     unreadable: [],
     currentWorkout: null,
     status: 'loading',
     error: null,
+    saveError: null,
   });
 }

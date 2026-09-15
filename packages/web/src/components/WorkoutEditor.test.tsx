@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Profiler } from 'react';
@@ -417,6 +417,38 @@ describe('WorkoutEditor', () => {
 
     // Two inside the block, one outside; rounds are not multiplied in.
     expect(screen.getByText('3 steps')).toBeInTheDocument();
+  });
+
+  it('offers a retry or a discard while edits cannot be saved', async () => {
+    const storage = await import('../storage/workouts.ts');
+    const user = await openEditor();
+    const id = store().currentWorkout!.id;
+    const failWrites = () =>
+      vi.spyOn(storage, 'putWorkout').mockRejectedValue(new Error('disk full'));
+
+    let put = failWrites();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.click(screen.getByRole('button', { name: '← Back to library' }));
+    // Still here, and told why.
+    expect(await screen.findByRole('alert')).toHaveTextContent('disk full');
+    expect(screen.getByLabelText('Exercise')).toBeInTheDocument();
+
+    put.mockRestore();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect((await storage.getWorkout(id))?.steps).toHaveLength(1);
+
+    // When saving is not coming back, a way out that does not need it.
+    put = failWrites();
+    try {
+      await user.click(screen.getByRole('button', { name: '+ Rest' }));
+      await store().flushSteps();
+      await user.click(await screen.findByRole('button', { name: 'Discard changes' }));
+      expect(store().currentWorkout).toBeNull();
+    } finally {
+      put.mockRestore();
+    }
+    expect((await storage.getWorkout(id))?.steps).toHaveLength(1);
   });
 
   it('writes pending edits when the workout is closed', async () => {
