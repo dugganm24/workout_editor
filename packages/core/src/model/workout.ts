@@ -12,10 +12,21 @@ import { z } from 'zod';
 
 export const SCHEMA_VERSION = 1;
 
+/**
+ * The rules for each number a user types. Named so the editor's number boxes
+ * check a value against the same schema a save will, rather than a hand-kept
+ * copy of it that drifts (`Number.isInteger` accepts integers past 2^53,
+ * which `.int()` rejects).
+ */
+export const RepsSchema = z.number().int().positive();
+export const SecondsSchema = z.number().positive();
+/** Weight in kilograms; display unit conversion happens in the UI. */
+export const KilogramsSchema = z.number().positive();
+export const RoundsSchema = z.number().int().min(1);
+
 export const WeightTargetSchema = z.object({
   type: z.literal('weight'),
-  /** Weight in kilograms; display unit conversion happens in the UI. */
-  kg: z.number().positive(),
+  kg: KilogramsSchema,
 });
 
 export const ExerciseStepSchema = z.object({
@@ -25,8 +36,8 @@ export const ExerciseStepSchema = z.object({
   /** Specific exercise key within the category, e.g. "BARBELL_BENCH_PRESS". */
   exercise: z.string().min(1).optional(),
   duration: z.discriminatedUnion('type', [
-    z.object({ type: z.literal('reps'), reps: z.number().int().positive() }),
-    z.object({ type: z.literal('time'), seconds: z.number().positive() }),
+    z.object({ type: z.literal('reps'), reps: RepsSchema }),
+    z.object({ type: z.literal('time'), seconds: SecondsSchema }),
     z.object({ type: z.literal('open') }),
   ]),
   target: WeightTargetSchema.optional(),
@@ -36,14 +47,14 @@ export const ExerciseStepSchema = z.object({
 export const RestStepSchema = z.object({
   kind: z.literal('rest'),
   duration: z.discriminatedUnion('type', [
-    z.object({ type: z.literal('time'), seconds: z.number().positive() }),
+    z.object({ type: z.literal('time'), seconds: SecondsSchema }),
     z.object({ type: z.literal('open') }),
   ]),
 });
 
 export const RepeatBlockSchema = z.object({
   kind: z.literal('repeat'),
-  rounds: z.number().int().min(1),
+  rounds: RoundsSchema,
   get steps() {
     return z.array(WorkoutStepSchema).min(1);
   },

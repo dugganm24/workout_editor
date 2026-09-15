@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SCHEMA_VERSION } from '@workout-editor/core';
+import { insertStep, SCHEMA_VERSION, type WorkoutStep } from '@workout-editor/core';
 import { serializeLibrary, serializeWorkout } from '../storage/files.ts';
 import * as storage from '../storage/workouts.ts';
 import { newWorkout } from '../storage/workouts.ts';
@@ -7,10 +7,307 @@ import { useWorkoutStore } from './workoutStore.ts';
 
 const store = () => useWorkoutStore.getState();
 
+/** Safety copies of unsaved edits currently in `localStorage`, from any tab. */
+const unsavedKeys = () =>
+  Object.keys(localStorage).filter((key) => key.startsWith('workout-editor:unsaved:'));
+
+/** A safety copy as a tab that has since closed would have left it (see `storage/unsaved.ts`). */
+function leaveCopyFromClosedTab(
+  workout: { id?: string; [field: string]: unknown },
+  editedAt: number,
+) {
+  localStorage.setItem(
+    `workout-editor:unsaved:closed-tab:${workout.id ?? 'broken'}`,
+    JSON.stringify({ tab: 'closed-tab', version: 1, editedAt, workout }),
+  );
+}
+
 /** The store reads a file through a thunk; tests hand it the text directly. */
 const asFile = (text: string) => () => Promise.resolve(text);
 
 describe('workout store', () => {
+  const squat: WorkoutStep = {
+    kind: 'exercise',
+    category: 'UNKNOWN',
+    exercise: 'Squat',
+    duration: { type: 'reps', reps: 5 },
+  };
+
+  /** Adds one step to the open workout, the way an editor row does. */
+  const addStep = (step: WorkoutStep = squat) =>
+    store().editSteps((steps) => insertStep(steps, [steps.length], step));
+
+  describe('step editing', () => {
+    it('shows the edit immediately and saves it after the pause', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await store().createWorkout('Push Day');
+        const id = store().currentWorkout!.id;
+
+        addStep();
+        // On screen straight away...
+        expect(store().currentWorkout?.steps).toHaveLength(1);
+        // ...and not yet written, so a burst of typing is one write.
+        expect((await storage.getWorkout(id))?.steps).toEqual([]);
+
+        // Only the timer can write it: nothing here calls flushSteps.
+        await vi.advanceTimersByTimeAsync(500);
+        vi.useRealTimers();
+        await vi.waitFor(async () => expect((await storage.getWorkout(id))?.steps).toHaveLength(1));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('collapses a burst of edits into a single write', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const put = vi.spyOn(storage, 'putWorkout');
+      try {
+        await store().createWorkout('Push Day');
+        put.mockClear();
+
+        for (let i = 0; i < 5; i++) addStep();
+        await vi.advanceTimersByTimeAsync(500);
+        vi.useRealTimers();
+        await vi.waitFor(() => expect(put).toHaveBeenCalled());
+
+        expect(put).toHaveBeenCalledTimes(1);
+        expect(put.mock.calls[0]?.[0].steps).toHaveLength(5);
+      } finally {
+        put.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it("updates the saved workout's summary without re-reading the library", async () => {
+      await store().createWorkout('Older');
+      await store().createWorkout('Push Day');
+      const older = store().summaries.find((s) => s.name === 'Older')!;
+      await store().openWorkout(older.id);
+      const list = vi.spyOn(storage, 'listWorkouts');
+      try {
+        addStep();
+        await store().flushSteps();
+
+        expect(list).not.toHaveBeenCalled();
+        // Newest write first, as a full reload would order it.
+        expect(store().summaries.map((s) => [s.name, s.stepCount])).toEqual([
+          ['Older', 1],
+          ['Push Day', 0],
+        ]);
+      } finally {
+        list.mockRestore();
+      }
+    });
+
+    it('writes a pending edit before an action that reads the workout back', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      addStep();
+
+      // Duplicate re-reads from storage; without the flush it would copy the
+      // workout as it was before the last keystroke.
+      await store().duplicateWorkout(id);
+
+      const copy = store().summaries.find((s) => s.name === 'Push Day (copy)');
+      expect(copy?.stepCount).toBe(1);
+    });
+
+    it('writes a pending edit when the workout is closed', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      addStep();
+
+      await store().closeWorkout();
+
+      expect(store().currentWorkout).toBeNull();
+      expect((await storage.getWorkout(id))?.steps).toHaveLength(1);
+    });
+
+    it('keeps a failed save pending, and the workout open, until it is written', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      addStep();
+      const put = vi.spyOn(storage, 'putWorkout').mockRejectedValue(new Error('disk full'));
+      try {
+        await store().closeWorkout();
+        expect(store().saveError).toBe('disk full');
+        // Leaving would have thrown away the only copy of the edit.
+        expect(store().currentWorkout?.steps).toHaveLength(1);
+
+        // Editing on does not dismiss it: nothing has been saved yet.
+        addStep();
+        expect(store().saveError).toBe('disk full');
+        await store().flushSteps();
+        expect(store().saveError).toBe('disk full');
+
+        // The edits were not dropped with the failed writes: leaving retries them.
+        put.mockRestore();
+        await store().closeWorkout();
+        expect(store().currentWorkout).toBeNull();
+        expect(store().saveError).toBeNull();
+        expect((await storage.getWorkout(id))?.steps).toHaveLength(2);
+      } finally {
+        put.mockRestore();
+      }
+    });
+
+    it('discards edits that could not be saved, when asked to', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      const put = vi.spyOn(storage, 'putWorkout').mockRejectedValue(new Error('disk full'));
+      try {
+        addStep();
+        await store().flushSteps();
+        expect(store().saveError).toBe('disk full');
+
+        store().discardChanges();
+
+        expect(store().currentWorkout).toBeNull();
+        expect(store().saveError).toBeNull();
+        expect(unsavedKeys()).toEqual([]);
+        put.mockRestore();
+        // Nothing is left to be retried.
+        await store().flushSteps();
+        expect((await storage.getWorkout(id))?.steps).toEqual([]);
+      } finally {
+        put.mockRestore();
+      }
+    });
+
+    it('starts the write as soon as the page is hidden', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const hidden = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+      try {
+        await store().createWorkout('Push Day');
+        const id = store().currentWorkout!.id;
+        addStep();
+        // Dropping the fake clock discards the autosave timer, so only the
+        // hide event can write the edit.
+        vi.useRealTimers();
+        document.dispatchEvent(new Event('visibilitychange'));
+
+        await vi.waitFor(async () => expect((await storage.getWorkout(id))?.steps).toHaveLength(1));
+      } finally {
+        hidden.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps a safety copy of each edit until that version is saved', async () => {
+      await store().createWorkout('Push Day');
+      addStep();
+      // Written with the edit, not later: a tab can close at any moment.
+      expect(unsavedKeys()).toHaveLength(1);
+
+      // A newer edit made while the older one is being written keeps its copy.
+      const realPut = storage.putWorkout;
+      const put = vi.spyOn(storage, 'putWorkout').mockImplementationOnce((workout) => {
+        addStep();
+        return realPut(workout);
+      });
+      try {
+        await store().flushSteps();
+        expect(unsavedKeys()).toHaveLength(1);
+      } finally {
+        put.mockRestore();
+      }
+
+      await store().flushSteps();
+      expect(unsavedKeys()).toEqual([]);
+    });
+
+    it('leaves copies of edits this tab still holds to its own autosave', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      addStep();
+
+      await store().loadLibrary();
+
+      expect(unsavedKeys()).toHaveLength(1);
+      expect((await storage.getWorkout(id))?.steps).toEqual([]);
+    });
+
+    it('writes an edit a closed tab left behind when the library next loads', async () => {
+      const workout = await storage.createWorkout('Push Day');
+      leaveCopyFromClosedTab({ ...workout, steps: [squat] }, Date.now() + 1_000);
+
+      await store().loadLibrary();
+
+      expect((await storage.getWorkout(workout.id))?.steps).toEqual([squat]);
+      expect(store().summaries.map((s) => [s.name, s.stepCount])).toEqual([['Push Day', 1]]);
+      expect(unsavedKeys()).toEqual([]);
+    });
+
+    it('keeps a left-behind edit as a separate workout when the original was saved since', async () => {
+      const workout = await storage.createWorkout('Push Day');
+      // Edited before the stored record was last written, from another tab say.
+      leaveCopyFromClosedTab({ ...workout, steps: [squat] }, 0);
+
+      await store().loadLibrary();
+
+      expect((await storage.getWorkout(workout.id))?.steps).toEqual([]);
+      expect(store().summaries.map((s) => [s.name, s.stepCount])).toEqual([
+        ['Push Day (recovered)', 1],
+        ['Push Day', 0],
+      ]);
+      expect(unsavedKeys()).toEqual([]);
+    });
+
+    it('does not bring back a workout deleted since its edit was left behind', async () => {
+      const workout = await storage.createWorkout('Push Day');
+      await storage.deleteWorkout(workout.id);
+      leaveCopyFromClosedTab({ ...workout, steps: [squat] }, Date.now() + 1_000);
+
+      await store().loadLibrary();
+
+      expect(store().summaries).toEqual([]);
+      expect(unsavedKeys()).toEqual([]);
+    });
+
+    it('drops a left-behind copy that can never be restored, and says so', async () => {
+      await storage.createWorkout('Push Day');
+      leaveCopyFromClosedTab({ not: 'a workout' }, Date.now());
+
+      await store().loadLibrary();
+
+      expect(store().error).toMatch(/could not be restored/);
+      expect(store().status).toBe('ready');
+      expect(unsavedKeys()).toEqual([]);
+    });
+
+    it('keeps an edit made while a rename is writing, and the new name', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+
+      const renaming = store().renameWorkout(id, 'Pull Day');
+      addStep();
+      await renaming;
+
+      expect(store().currentWorkout).toMatchObject({ name: 'Pull Day', steps: [squat] });
+      await store().flushSteps();
+      expect(await storage.getWorkout(id)).toMatchObject({ name: 'Pull Day', steps: [squat] });
+    });
+
+    it('ignores an edit that changes nothing, and one with nothing open', async () => {
+      const put = vi.spyOn(storage, 'putWorkout');
+      try {
+        // Nothing open: no crash, no write.
+        store().editSteps((steps) => [...steps, squat]);
+        expect(put).not.toHaveBeenCalled();
+
+        await store().createWorkout('Push Day');
+        put.mockClear();
+        // A step operation hands back the same array when it declines an edit.
+        store().editSteps((steps) => steps);
+        await store().flushSteps();
+        expect(put).not.toHaveBeenCalled();
+      } finally {
+        put.mockRestore();
+      }
+    });
+  });
+
   it('creates a workout, opens it, and lists it', async () => {
     await store().createWorkout('Push Day');
 
@@ -82,7 +379,7 @@ describe('workout store', () => {
 
   it('closeWorkout returns to the library without deleting', async () => {
     await store().createWorkout('Push Day');
-    store().closeWorkout();
+    await store().closeWorkout();
 
     expect(store().currentWorkout).toBeNull();
     expect(store().summaries).toHaveLength(1);

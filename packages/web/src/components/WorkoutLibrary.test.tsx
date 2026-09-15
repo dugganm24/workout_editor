@@ -78,7 +78,7 @@ describe('WorkoutLibrary', () => {
 
   it('offers a retry when a reload fails, even with a list still on screen', async () => {
     await useWorkoutStore.getState().createWorkout('Push Day');
-    useWorkoutStore.getState().closeWorkout();
+    await useWorkoutStore.getState().closeWorkout();
     render(<WorkoutLibrary />);
     await screen.findByRole('button', { name: 'Push Day' });
 
