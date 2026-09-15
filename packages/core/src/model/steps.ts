@@ -117,14 +117,18 @@ export function pruneEmptyBlocks(steps: WorkoutStep[]): WorkoutStep[] {
   return changed ? pruned : steps;
 }
 
-export function removeStep(steps: WorkoutStep[], path: StepPath): WorkoutStep[] {
-  const without = editParent(steps, path, (siblings, index) => {
+/** Takes the step at `path` out of its list, without pruning what that leaves empty. */
+function detachStep(steps: WorkoutStep[], path: StepPath): WorkoutStep[] {
+  return editParent(steps, path, (siblings, index) => {
     if (!siblings[index]) return siblings;
     const copy = [...siblings];
     copy.splice(index, 1);
     return copy;
   });
-  return pruneEmptyBlocks(without);
+}
+
+export function removeStep(steps: WorkoutStep[], path: StepPath): WorkoutStep[] {
+  return pruneEmptyBlocks(detachStep(steps, path));
 }
 
 /**
@@ -148,15 +152,15 @@ export function moveStep(steps: WorkoutStep[], from: StepPath, to: StepPath): Wo
   const destination = shiftForRemoval(from, to);
   if (pathsEqual(destination, from)) return steps;
 
-  const detached = editParent(steps, from, (siblings, index) => {
-    if (!siblings[index]) return siblings;
-    const copy = [...siblings];
-    copy.splice(index, 1);
-    return copy;
-  });
+  const detached = detachStep(steps, from);
   if (detached === steps) return steps;
+  const inserted = insertStep(detached, destination, step);
+  // A destination that does not resolve (past the end of its list, or inside a
+  // step that is not a block) must leave the tree alone. Returning the detached
+  // tree would delete the step, and the editor would save that.
+  if (inserted === detached) return steps;
 
-  return pruneEmptyBlocks(insertStep(detached, destination, step));
+  return pruneEmptyBlocks(inserted);
 }
 
 /**

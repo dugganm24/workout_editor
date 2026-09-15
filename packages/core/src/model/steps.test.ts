@@ -154,6 +154,14 @@ describe('moveStep', () => {
     ]);
   });
 
+  it('leaves the tree alone when the destination does not resolve', () => {
+    const before = tree();
+    // Past the end of the list, and into an exercise, which has no children.
+    expect(moveStep(before, [0], [5])).toBe(before);
+    expect(moveStep(before, [0], [2, 0])).toBe(before);
+    expect(moveStep(before, [1, 0], [1, 7])).toBe(before);
+  });
+
   it('refuses to move a block inside itself', () => {
     const before = tree();
     expect(moveStep(before, [1], [1, 0])).toBe(before);
