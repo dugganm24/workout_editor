@@ -280,6 +280,27 @@ describe('WorkoutEditor', () => {
     expect(commits).toBe(settled);
   });
 
+  it('says what an imported step is when it has a category but no name', async () => {
+    await store().createWorkout('Imported');
+    store().editSteps(() => [
+      { kind: 'exercise', category: 'PLANK', duration: { type: 'open' }, notes: 'Keep hips level' },
+    ]);
+    render(<OpenWorkout />);
+
+    expect(screen.getByLabelText('Exercise')).toHaveValue('');
+    expect(screen.getByText('Plank')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete Plank' })).toBeInTheDocument();
+    expect(screen.getByText('Keep hips level')).toBeInTheDocument();
+  });
+
+  it('shows no category for a step the editor added itself', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+
+    expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete exercise' })).toBeInTheDocument();
+  });
+
   it('duplicates and deletes a step from its own row', async () => {
     const user = await openEditor();
     await user.click(screen.getByRole('button', { name: '+ Exercise' }));

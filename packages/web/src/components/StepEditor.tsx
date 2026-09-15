@@ -20,7 +20,13 @@ import {
   type StepPath,
   type WorkoutStep,
 } from '@workout-editor/core';
-import { newExerciseStep, newRepeatBlock, newRestStep, stepLike } from './stepDefaults.ts';
+import {
+  newExerciseStep,
+  newRepeatBlock,
+  newRestStep,
+  PLACEHOLDER_CATEGORY,
+  stepLike,
+} from './stepDefaults.ts';
 
 /**
  * The editable step tree. Rows mirror the canonical model one-for-one — an
@@ -472,9 +478,23 @@ function StepRow({
   );
 }
 
+/** Category keys are Garmin's SCREAMING_SNAKE enums until the taxonomy lands. */
+function humanize(key: string): string {
+  return key
+    .toLowerCase()
+    .split('_')
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
 function ExerciseRow({ step, path }: { step: ExerciseStep; path: StepPath }) {
   const { edit } = useEditor();
-  const label = step.exercise ?? 'exercise';
+  // A step imported from a backup or a device can carry a real category and no
+  // name. The name box is empty for it, so the category is what says what the
+  // step is, both on screen and in the row's button labels.
+  const category = step.category === PLACEHOLDER_CATEGORY ? undefined : humanize(step.category);
+  const label = step.exercise ?? category ?? 'exercise';
 
   return (
     <StepRow step={step} path={path} label={label}>
@@ -495,6 +515,9 @@ function ExerciseRow({ step, path }: { step: ExerciseStep; path: StepPath }) {
           );
         }}
       />
+      {category && (
+        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">{category}</span>
+      )}
       <DurationFields step={step} path={path} />
       <NumberField
         label="Weight in kilograms"
@@ -511,6 +534,9 @@ function ExerciseRow({ step, path }: { step: ExerciseStep; path: StepPath }) {
           )
         }
       />
+      {/* Shown as it was before the editor existed, so a note that came in with
+          a workout is not silently hidden. Editing notes is not offered yet. */}
+      {step.notes && <p className="w-full text-sm text-gray-500">{step.notes}</p>}
     </StepRow>
   );
 }
