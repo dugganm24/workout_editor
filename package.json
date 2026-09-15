@@ -1,7 +1,7 @@
 {
   "name": "workout-editor",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Open-source workout builder for Garmin-compatible devices",
   "license": "MIT",
   "type": "module",
