@@ -289,17 +289,28 @@ describe('WorkoutEditor', () => {
     expect(commits).toBe(settled);
   });
 
-  it('says what an imported step is when it has a category but no name', async () => {
+  it('shows an imported step by its humanized Garmin names, read-only', async () => {
     await store().createWorkout('Imported');
     store().editSteps(() => [
       { kind: 'exercise', category: 'PLANK', duration: { type: 'open' }, notes: 'Keep hips level' },
+      {
+        kind: 'exercise',
+        category: 'BENCH_PRESS',
+        exercise: 'BARBELL_BENCH_PRESS',
+        duration: { type: 'reps', reps: 5 },
+      },
     ]);
     render(<OpenWorkout />);
 
-    expect(screen.getByLabelText('Exercise')).toHaveValue('');
+    // A key edited by hand would be one that exists nowhere, so there is no box to edit it in.
+    expect(screen.queryByLabelText('Exercise')).not.toBeInTheDocument();
     expect(screen.getByText('Plank')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete Plank' })).toBeInTheDocument();
     expect(screen.getByText('Keep hips level')).toBeInTheDocument();
+
+    expect(screen.getByText('Barbell Bench Press')).toBeInTheDocument();
+    expect(screen.getByText('Bench Press')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete Barbell Bench Press' })).toBeInTheDocument();
   });
 
   it('shows no category for a step the editor added itself', async () => {

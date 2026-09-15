@@ -525,7 +525,7 @@ function StepRow({
   );
 }
 
-/** Category keys are Garmin's SCREAMING_SNAKE enums until the taxonomy lands. */
+/** Category and exercise keys are Garmin's SCREAMING_SNAKE enums until the taxonomy lands. */
 function humanize(key: string): string {
   return key
     .toLowerCase()
@@ -537,33 +537,44 @@ function humanize(key: string): string {
 
 function ExerciseRow({ step, path }: { step: ExerciseStep; path: StepPath }) {
   const { edit } = useEditor();
-  // A step imported from a backup or a device can carry a real category and no
-  // name. The name box is empty for it, so the category is what says what the
-  // step is, both on screen and in the row's button labels.
-  const category = step.category === PLACEHOLDER_CATEGORY ? undefined : humanize(step.category);
-  const label = step.exercise ?? category ?? 'exercise';
+  // A real category means the step came from Garmin's taxonomy (an import or a
+  // backup), and its `exercise` is a key within that category, not free text.
+  // Editing a key character by character would save one that exists nowhere,
+  // under a category that no longer matches, so such a step shows its name
+  // read-only until the exercise picker can offer valid choices. Steps built
+  // here carry the placeholder category, and their name is theirs to type.
+  const fromTaxonomy = step.category !== PLACEHOLDER_CATEGORY;
+  const label = fromTaxonomy
+    ? humanize(step.exercise ?? step.category)
+    : (step.exercise ?? 'exercise');
 
   return (
     <StepRow step={step} path={path} label={label}>
-      <input
-        aria-label="Exercise"
-        placeholder="Exercise name"
-        className="min-w-40 flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm font-medium focus:border-gray-500 focus:outline-none"
-        value={step.exercise ?? ''}
-        onChange={(event) => {
-          const name = event.target.value;
-          edit((steps) =>
-            replaceStep(steps, path, {
-              ...step,
-              // Absent rather than empty: `exercise` is optional in the model,
-              // and "" would be a name the schema rejects.
-              exercise: name.trim() === '' ? undefined : name,
-            }),
-          );
-        }}
-      />
-      {category && (
-        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">{category}</span>
+      {fromTaxonomy ? (
+        <span className="flex min-w-40 flex-1 flex-col text-sm">
+          <span className="font-medium text-gray-900">{label}</span>
+          {step.exercise && (
+            <span className="text-xs text-gray-500">{humanize(step.category)}</span>
+          )}
+        </span>
+      ) : (
+        <input
+          aria-label="Exercise"
+          placeholder="Exercise name"
+          className="min-w-40 flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm font-medium focus:border-gray-500 focus:outline-none"
+          value={step.exercise ?? ''}
+          onChange={(event) => {
+            const name = event.target.value;
+            edit((steps) =>
+              replaceStep(steps, path, {
+                ...step,
+                // Absent rather than empty: `exercise` is optional in the model,
+                // and "" would be a name the schema rejects.
+                exercise: name.trim() === '' ? undefined : name,
+              }),
+            );
+          }}
+        />
       )}
       <DurationFields step={step} path={path} />
       <NumberField
