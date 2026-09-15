@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Profiler } from 'react';
 import { useWorkoutStore } from '../store/workoutStore.ts';
@@ -23,6 +23,15 @@ async function openEditor(name = 'Push Day') {
   render(<OpenWorkout />);
   return userEvent.setup();
 }
+
+/** A named exercise, as an imported or earlier-built workout would hold it. */
+const exercise = (name: string) =>
+  ({
+    kind: 'exercise',
+    category: 'UNKNOWN',
+    exercise: name,
+    duration: { type: 'reps', reps: 5 },
+  }) as const;
 
 const exerciseNames = () =>
   screen.getAllByLabelText('Exercise').map((input) => (input as HTMLInputElement).value);
@@ -299,6 +308,93 @@ describe('WorkoutEditor', () => {
 
     expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete exercise' })).toBeInTheDocument();
+  });
+
+  it('after a delete that empties a block, puts the cursor on the next step, not inside it', async () => {
+    await store().createWorkout('Push Day');
+    store().editSteps(() => [
+      { kind: 'repeat', rounds: 3, steps: [{ ...exercise('X') }] },
+      { kind: 'repeat', rounds: 2, steps: [{ ...exercise('Y') }] },
+    ]);
+    render(<OpenWorkout />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Delete X' }));
+
+    // The second block took the first one's place: its own first field, not Y's.
+    expect(exerciseNames()).toEqual(['Y']);
+    expect(screen.getByLabelText('Rounds')).toHaveFocus();
+
+    // Nothing left: the add buttons, not the page body.
+    await user.click(screen.getByRole('button', { name: 'Delete Y' }));
+    expect(screen.getByRole('button', { name: '+ Exercise' })).toHaveFocus();
+  });
+
+  it("ignores Alt+arrow pressed on a block's own add buttons", async () => {
+    await store().createWorkout('Push Day');
+    store().editSteps(() => [exercise('A'), { kind: 'repeat', rounds: 3, steps: [exercise('B')] }]);
+    render(<OpenWorkout />);
+    const user = userEvent.setup();
+
+    screen.getAllByRole('button', { name: '+ Rest' })[0]!.focus();
+    await user.keyboard('{Alt>}{ArrowUp}{/Alt}');
+
+    expect(store().currentWorkout?.steps.map((s) => s.kind)).toEqual(['exercise', 'repeat']);
+  });
+
+  it('drops in the gaps inside a block where the highlight already is', async () => {
+    await store().createWorkout('Push Day');
+    store().editSteps(() => [
+      { kind: 'repeat', rounds: 3, steps: [exercise('B'), exercise('C')] },
+      exercise('Z'),
+    ]);
+    render(<OpenWorkout />);
+
+    await startDrag(screen.getAllByText('⠿').at(-1)!);
+    const c = screen.getAllByLabelText('Exercise')[1]!.closest('li')!;
+    const block = c.parentElement!.closest('li')!;
+    fireEvent.dragOver(c);
+    // Into the gap, or over the block's add buttons: neither belongs to a row.
+    const nestedList = c.parentElement!;
+    fireEvent.dragOver(nestedList);
+    fireEvent.dragOver(screen.getAllByRole('button', { name: '+ Rest' })[0]!);
+
+    expect(c).toHaveClass('border-gray-900');
+    expect(block).not.toHaveClass('border-gray-900');
+    fireEvent.drop(nestedList);
+    expect(exerciseNames()).toEqual(['B', 'Z', 'C']);
+  });
+
+  it('keeps the drop target while the pointer crosses controls, until it leaves the tree', async () => {
+    await store().createWorkout('Push Day');
+    store().editSteps(() => [exercise('A'), exercise('B')]);
+    render(<OpenWorkout />);
+
+    await startDrag(screen.getAllByText('⠿')[0]!);
+    const b = screen.getAllByLabelText('Exercise')[1]!.closest('li')!;
+    fireEvent.dragOver(b);
+    const [nameBox, repsBox] = [
+      screen.getAllByLabelText('Exercise')[1]!,
+      screen.getAllByLabelText('Reps')[1]!,
+    ];
+    // jsdom has no DragEvent, and only a MouseEvent carries `relatedTarget`.
+    const leave = (from: Element, to: Element | null) =>
+      act(() => {
+        from.dispatchEvent(new MouseEvent('dragleave', { bubbles: true, relatedTarget: to }));
+      });
+    leave(nameBox, repsBox);
+    expect(b).toHaveClass('border-gray-900');
+
+    leave(b, null);
+    expect(b).not.toHaveClass('border-gray-900');
+  });
+
+  it('renders each list as list items only', async () => {
+    await store().createWorkout('Push Day');
+    store().editSteps(() => [exercise('A'), { kind: 'repeat', rounds: 3, steps: [exercise('B')] }]);
+    render(<OpenWorkout />);
+
+    expect(document.querySelectorAll('ol > :not(li)')).toHaveLength(0);
   });
 
   it('duplicates and deletes a step from its own row', async () => {

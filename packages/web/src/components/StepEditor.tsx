@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   duplicateStep,
   getStep,
@@ -102,15 +110,18 @@ export function StepEditorProvider({
   // edit that changed nothing (moving the first row up) names a row that may
   // not exist, and would sit there until some later edit created it and it
   // stole the cursor; `edit` reporting "no change" is what prevents that.
-  function applyEdit(mutate: Edit): boolean {
-    let changed = false;
-    edit((steps) => {
-      const next = mutate(steps);
-      changed = next !== steps;
-      return next;
-    });
-    return changed;
-  }
+  const applyEdit = useCallback(
+    (mutate: Edit): boolean => {
+      let changed = false;
+      edit((steps) => {
+        const next = mutate(steps);
+        changed = next !== steps;
+        return next;
+      });
+      return changed;
+    },
+    [edit],
+  );
 
   const requestFocus = useCallback(
     (path: StepPath | null, control?: number) =>
@@ -118,21 +129,22 @@ export function StepEditorProvider({
     [],
   );
 
-  return (
-    <EditorContext.Provider
-      value={{
-        edit: applyEdit,
-        focusRequest,
-        requestFocus,
-        dragPath,
-        setDragPath,
-        dropPath,
-        setDropPath,
-      }}
-    >
-      {children}
-    </EditorContext.Provider>
+  // Stable between changes to its own state, so the rows only re-render for
+  // the tree's state and not every time the editor above them does.
+  const api = useMemo(
+    () => ({
+      edit: applyEdit,
+      focusRequest,
+      requestFocus,
+      dragPath,
+      setDragPath,
+      dropPath,
+      setDropPath,
+    }),
+    [applyEdit, focusRequest, requestFocus, dragPath, dropPath, setDropPath],
   );
+
+  return <EditorContext.Provider value={api}>{children}</EditorContext.Provider>;
 }
 
 /** Structural, so the editor needs the model's schemas but not zod itself. */
@@ -311,30 +323,42 @@ function controlIndex(control: Element): number | undefined {
 }
 
 /**
- * After a delete, the cursor goes to the step that took the deleted one's place,
- * else the one before it, else up a level (a block emptied by the delete is
- * gone too). Never left on the Delete button: rows are keyed by position, so
- * that button now belongs to the next step, and a second Enter would delete it.
+ * Where the cursor goes after a delete: the step that takes the deleted one's
+ * place, else the one before it. A step that was the only one in its block
+ * takes the block with it, so the search moves out to the block's own
+ * neighbours. Worked out on the tree *before* the delete, since after it a path
+ * inside a pruned block can resolve to a step inside the next block instead.
+ *
+ * Never left on the Delete button: rows are keyed by position, so that button
+ * now belongs to the next step, and a second Enter would delete it too. The
+ * empty path, when nothing is left, means the add buttons under the tree.
  */
-function focusAfterRemoval(steps: WorkoutStep[], path: StepPath): StepPath | null {
+function focusAfterRemoval(before: WorkoutStep[], path: StepPath): StepPath {
   for (let at = path; at.length > 0; at = at.slice(0, -1)) {
-    if (getStep(steps, at)) return at;
-    const index = at[at.length - 1] ?? 0;
-    const before = [...at.slice(0, -1), index - 1];
-    if (index > 0 && getStep(steps, before)) return before;
+    const parent = at.slice(0, -1);
+    const block = getStep(before, parent);
+    const siblings = block?.kind === 'repeat' ? block.steps : before;
+    if (siblings.length > 1) {
+      const index = at[at.length - 1] ?? 0;
+      return index < siblings.length - 1 ? at : [...parent, index - 1];
+    }
   }
-  return null;
+  return [];
+}
+
+/** Swaps a step with a neighbour, keeping the cursor on the control that asked. */
+function useMoveBy(path: StepPath): (delta: number, control: Element) => void {
+  const { edit, requestFocus } = useEditor();
+  return (delta, control) => {
+    if (!edit((steps) => moveStepBy(steps, path, delta))) return;
+    const index = path[path.length - 1] ?? 0;
+    requestFocus([...path.slice(0, -1), index + delta], controlIndex(control));
+  };
 }
 
 function RowActions({ path, label }: { path: StepPath; label: string }) {
   const { edit, requestFocus } = useEditor();
-  const index = path[path.length - 1] ?? 0;
-
-  function move(delta: number, button: Element) {
-    if (edit((steps) => moveStepBy(steps, path, delta))) {
-      requestFocus([...path.slice(0, -1), index + delta], controlIndex(button));
-    }
-  }
+  const move = useMoveBy(path);
 
   return (
     <div className="flex items-center gap-1">
@@ -369,11 +393,10 @@ function RowActions({ path, label }: { path: StepPath; label: string }) {
         aria-label={`Delete ${label}`}
         className="rounded-md border border-gray-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50"
         onClick={() => {
-          let next: StepPath | null = null;
+          let next: StepPath = [];
           const changed = edit((steps) => {
-            const after = removeStep(steps, path);
-            next = focusAfterRemoval(after, path);
-            return after;
+            next = focusAfterRemoval(steps, path);
+            return removeStep(steps, path);
           });
           if (changed) requestFocus(next);
         }}
@@ -402,8 +425,8 @@ function StepRow({
 }) {
   const { edit, focusRequest, requestFocus, dragPath, setDragPath, dropPath, setDropPath } =
     useEditor();
+  const move = useMoveBy(path);
   const dragStartTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const index = path[path.length - 1] ?? 0;
   const isDropTarget = dropPath !== null && pathsEqual(dropPath, path);
 
   const rowRef = useRef<HTMLLIElement>(null);
@@ -429,31 +452,28 @@ function StepRow({
     requestFocus(null);
   }, [focusHere, requestFocus]);
 
-  function keyDown(event: React.KeyboardEvent) {
-    // Only from a box being typed in: Enter on a button or select is that
-    // control's own action, and must not turn into "add a step".
+  function keyDown(event: React.KeyboardEvent<HTMLLIElement>) {
+    // Only keys pressed on this row's own controls. A block's row contains its
+    // nested rows and its own add buttons, whose keys bubble up through it.
+    const target = event.target as Element;
+    if (target.closest('li') !== event.currentTarget) return;
+
     if (
       event.key === 'Enter' &&
       !event.shiftKey &&
       // The Enter that confirms an IME candidate belongs to the composition.
       !event.nativeEvent.isComposing &&
-      event.target instanceof HTMLInputElement
+      // Enter on a button or select is that control's own action.
+      target instanceof HTMLInputElement
     ) {
       event.preventDefault();
-      // A row inside a block sits inside the block's row too; without this the
-      // block would add a step of its own after this one.
-      event.stopPropagation();
       const next = pathAfter(path);
       if (edit((steps) => insertStep(steps, next, stepLike(step)))) requestFocus(next);
       return;
     }
     if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
       event.preventDefault();
-      event.stopPropagation();
-      const delta = event.key === 'ArrowUp' ? -1 : 1;
-      if (edit((steps) => moveStepBy(steps, path, delta))) {
-        requestFocus([...path.slice(0, -1), index + delta], controlIndex(event.target as Element));
-      }
+      move(event.key === 'ArrowUp' ? -1 : 1, target);
     }
   }
 
@@ -464,26 +484,17 @@ function StepRow({
       onKeyDown={keyDown}
       onDragOver={(event) => {
         // The innermost row decides, including deciding there is no drop here:
-        // an enclosing block claiming the event would highlight itself while
-        // the drop still lands on this row.
+        // an enclosing block claiming the event would highlight itself instead.
         event.stopPropagation();
-        if (!dragPath || pathsEqual(dragPath, path)) return;
-        // Into its own subtree there is nowhere to land.
-        if (isDescendant(path, dragPath)) return;
+        // Onto itself, or into its own subtree, there is nowhere to land.
+        if (!dragPath || pathsEqual(dragPath, path) || isDescendant(path, dragPath)) {
+          setDropPath(null);
+          return;
+        }
         event.preventDefault();
         setDropPath(path);
       }}
-      // Cleared unconditionally: `dragover` fires continuously and the row the
-      // pointer moved onto sets itself as the target again straight away.
-      onDragLeave={() => setDropPath(null)}
-      onDrop={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const from = dragPath;
-        setDropPath(null);
-        setDragPath(null);
-        if (from) edit((steps) => moveStep(steps, from, path));
-      }}
+      // The drop itself is handled by the list holding this row (see StepEditor).
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
         <span
@@ -611,7 +622,7 @@ function RepeatRow({ step, path }: { step: RepeatBlock; path: StepPath }) {
 
 /** The gap after the last row: where a step dropped past the end lands. */
 function TailDropZone({ steps, path }: { steps: WorkoutStep[]; path: StepPath }) {
-  const { edit, dragPath, setDragPath, dropPath, setDropPath } = useEditor();
+  const { dragPath, dropPath, setDropPath } = useEditor();
   const tail = [...path, steps.length];
   const active = dropPath !== null && pathsEqual(dropPath, tail);
   if (!dragPath) return null;
@@ -622,17 +633,12 @@ function TailDropZone({ steps, path }: { steps: WorkoutStep[]; path: StepPath })
       className={`h-6 rounded-md border border-dashed ${active ? 'border-gray-900 bg-gray-50' : 'border-gray-200'}`}
       onDragOver={(event) => {
         event.stopPropagation();
-        if (isDescendant(tail, dragPath)) return;
+        if (isDescendant(tail, dragPath)) {
+          setDropPath(null);
+          return;
+        }
         event.preventDefault();
         setDropPath(tail);
-      }}
-      onDrop={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const from = dragPath;
-        setDropPath(null);
-        setDragPath(null);
-        edit((steps) => moveStep(steps, from, tail));
       }}
     />
   );
@@ -640,9 +646,20 @@ function TailDropZone({ steps, path }: { steps: WorkoutStep[]; path: StepPath })
 
 /** Adds to the end of whichever list it is rendered under. */
 export function AddStepButtons({ steps, path }: { steps: WorkoutStep[]; path: StepPath }) {
-  const { edit, requestFocus } = useEditor();
+  const { edit, focusRequest, requestFocus } = useEditor();
   const where = [...path, steps.length];
   const nested = path.length > 0;
+  const firstButton = useRef<HTMLButtonElement>(null);
+  // The empty path is a request for the tree's own add buttons: where the cursor
+  // goes once the last step is deleted. A nested list's path is its block's,
+  // which that block's row answers to instead.
+  const focusHere = !nested && focusRequest?.path.length === 0;
+
+  useEffect(() => {
+    if (!focusHere) return;
+    firstButton.current?.focus();
+    requestFocus(null);
+  }, [focusHere, requestFocus]);
 
   function add(step: WorkoutStep) {
     if (edit((current) => insertStep(current, where, step))) requestFocus(where);
@@ -651,6 +668,7 @@ export function AddStepButtons({ steps, path }: { steps: WorkoutStep[]; path: St
   return (
     <div className="flex flex-wrap gap-2 text-sm">
       <button
+        ref={firstButton}
         type="button"
         className="rounded-md border border-gray-300 px-2.5 py-1 hover:bg-gray-50"
         onClick={() => add(newExerciseStep())}
@@ -681,20 +699,52 @@ export function AddStepButtons({ steps, path }: { steps: WorkoutStep[]; path: St
 }
 
 export default function StepEditor({ steps, path }: { steps: WorkoutStep[]; path: StepPath }) {
+  const { edit, dragPath, setDragPath, dropPath, setDropPath } = useEditor();
+  const root = path.length === 0;
+
   return (
-    <ol className="flex flex-col gap-2">
+    <ol
+      className="flex flex-col gap-2"
+      // The gaps between rows, and a block's add buttons, belong to no row. A
+      // drop there lands on whatever is already highlighted, so the highlight
+      // always shows where a drop will go, rather than the enclosing block
+      // claiming the gap as "above the block".
+      onDragOver={(event) => {
+        event.stopPropagation();
+        if (dragPath && dropPath) event.preventDefault();
+      }}
+      // Every drop in the list, on a row or between rows, arrives here.
+      onDrop={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const from = dragPath;
+        const to = dropPath;
+        setDragPath(null);
+        setDropPath(null);
+        if (from && to) edit((current) => moveStep(current, from, to));
+      }}
+      // Only leaving the whole tree clears the target. `dragleave` also fires
+      // for every child the pointer crosses inside it, and clearing on each of
+      // those re-rendered every row twice per crossing.
+      onDragLeave={
+        root
+          ? (event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                setDropPath(null);
+              }
+            }
+          : undefined
+      }
+    >
       {steps.map((step, index) => {
         const stepPath = [...path, index];
-        return (
-          <div key={index} className="contents">
-            {step.kind === 'exercise' && <ExerciseRow step={step} path={stepPath} />}
-            {step.kind === 'rest' && <RestRow step={step} path={stepPath} />}
-            {step.kind === 'repeat' && <RepeatRow step={step} path={stepPath} />}
-          </div>
-        );
+        if (step.kind === 'exercise')
+          return <ExerciseRow key={index} step={step} path={stepPath} />;
+        if (step.kind === 'rest') return <RestRow key={index} step={step} path={stepPath} />;
+        return <RepeatRow key={index} step={step} path={stepPath} />;
       })}
       <TailDropZone steps={steps} path={path} />
-      {path.length > 0 && (
+      {!root && (
         <li className="pt-1">
           <AddStepButtons steps={steps} path={path} />
         </li>
