@@ -16,6 +16,7 @@ import {
   moveStep,
   moveStepBy,
   pathAfter,
+  movesNowhere,
   pathsEqual,
   removeStep,
   replaceStep,
@@ -61,8 +62,19 @@ interface FocusRequest {
 }
 
 interface EditorApi {
-  /** Applies an edit. False when it changed nothing, so there is nothing to follow with the cursor. */
-  edit: (mutate: Edit) => boolean;
+  /**
+   * Applies an edit. False when it changed nothing, so there is nothing to
+   * follow with the cursor. `moves` says the edit can put a different step at
+   * a position a row already occupies (see `generation`).
+   */
+  edit: (mutate: Edit, options?: { moves: boolean }) => boolean;
+  /**
+   * Bumped by every edit that moves steps. Rows are addressed by position, so
+   * it goes in their keys: a row whose step changed underneath it is a new row,
+   * and no state of the old one — a half-typed number, a pending blur — can be
+   * written into the step that replaced it.
+   */
+  generation: number;
   /** The row that should take the cursor once it renders, then be forgotten. */
   focusRequest: FocusRequest | null;
   requestFocus: (path: StepPath | null, control?: number) => void;
@@ -92,6 +104,7 @@ export function StepEditorProvider({
   children: React.ReactNode;
 }) {
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+  const [generation, setGeneration] = useState(0);
   const [dragPath, setDragPath] = useState<StepPath | null>(null);
   const [dropPath, setDropPathState] = useState<StepPath | null>(null);
 
@@ -111,13 +124,14 @@ export function StepEditorProvider({
   // not exist, and would sit there until some later edit created it and it
   // stole the cursor; `edit` reporting "no change" is what prevents that.
   const applyEdit = useCallback(
-    (mutate: Edit): boolean => {
+    (mutate: Edit, options?: { moves: boolean }): boolean => {
       let changed = false;
       edit((steps) => {
         const next = mutate(steps);
         changed = next !== steps;
         return next;
       });
+      if (changed && options?.moves) setGeneration((current) => current + 1);
       return changed;
     },
     [edit],
@@ -134,6 +148,7 @@ export function StepEditorProvider({
   const api = useMemo(
     () => ({
       edit: applyEdit,
+      generation,
       focusRequest,
       requestFocus,
       dragPath,
@@ -141,7 +156,7 @@ export function StepEditorProvider({
       dropPath,
       setDropPath,
     }),
-    [applyEdit, focusRequest, requestFocus, dragPath, dropPath, setDropPath],
+    [applyEdit, generation, focusRequest, requestFocus, dragPath, dropPath, setDropPath],
   );
 
   return <EditorContext.Provider value={api}>{children}</EditorContext.Provider>;
@@ -183,19 +198,13 @@ function NumberField({
   onCommit: (value: number | undefined) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
-  /** The value when focus arrived, and the last one this box committed. */
-  const editing = useRef<{ original: number | undefined; committed: number | undefined } | null>(
-    null,
-  );
+  /** The value when focus arrived, to put back if what replaced it is rejected. */
+  const original = useRef<number | undefined>(undefined);
+  const focused = useRef(false);
   const invalid = draft !== null && !accepts(draft);
 
   function accepts(text: string): boolean {
     return text.trim() === '' ? optional : rule.safeParse(Number(text)).success;
-  }
-
-  function commit(next: number | undefined) {
-    if (editing.current) editing.current.committed = next;
-    onCommit(next);
   }
 
   function change(input: HTMLInputElement) {
@@ -205,24 +214,20 @@ function NumberField({
     // well as for an empty one. Only a truly empty box counts as cleared.
     if (input.validity.badInput) return;
     if (text.trim() === '') {
-      if (optional) commit(undefined);
+      if (optional) onCommit(undefined);
       return;
     }
     const parsed = Number(text);
-    if (rule.safeParse(parsed).success) commit(parsed);
+    if (rule.safeParse(parsed).success) onCommit(parsed);
   }
 
   function blur(input: HTMLInputElement) {
-    const session = editing.current;
-    editing.current = null;
+    const wasFocused = focused.current;
+    focused.current = false;
     setDraft(null);
-    if (!session) return;
+    if (!wasFocused) return;
     const rejected = input.validity.badInput || (draft !== null && !accepts(draft));
-    // Rows are keyed by position, so a box whose value is no longer the one it
-    // committed is now showing a different step (Alt+arrow moved its own):
-    // putting anything back would write into that step.
-    if (!rejected || value !== session.committed) return;
-    if (session.original !== value) onCommit(session.original);
+    if (rejected && original.current !== value) onCommit(original.current);
   }
 
   return (
@@ -239,7 +244,8 @@ function NumberField({
         }`}
         value={draft ?? (value === undefined ? '' : String(value))}
         onFocus={() => {
-          editing.current = { original: value, committed: value };
+          original.current = value;
+          focused.current = true;
         }}
         onChange={(event) => change(event.target)}
         onBlur={(event) => blur(event.target)}
@@ -350,7 +356,7 @@ function focusAfterRemoval(before: WorkoutStep[], path: StepPath): StepPath {
 function useMoveBy(path: StepPath): (delta: number, control: Element) => void {
   const { edit, requestFocus } = useEditor();
   return (delta, control) => {
-    if (!edit((steps) => moveStepBy(steps, path, delta))) return;
+    if (!edit((steps) => moveStepBy(steps, path, delta), { moves: true })) return;
     const index = path[path.length - 1] ?? 0;
     requestFocus([...path.slice(0, -1), index + delta], controlIndex(control));
   };
@@ -383,7 +389,9 @@ function RowActions({ path, label }: { path: StepPath; label: string }) {
         aria-label={`Duplicate ${label}`}
         className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
         onClick={() => {
-          if (edit((steps) => duplicateStep(steps, path))) requestFocus(pathAfter(path));
+          if (edit((steps) => duplicateStep(steps, path), { moves: true })) {
+            requestFocus(pathAfter(path));
+          }
         }}
       >
         Duplicate
@@ -394,10 +402,13 @@ function RowActions({ path, label }: { path: StepPath; label: string }) {
         className="rounded-md border border-gray-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50"
         onClick={() => {
           let next: StepPath = [];
-          const changed = edit((steps) => {
-            next = focusAfterRemoval(steps, path);
-            return removeStep(steps, path);
-          });
+          const changed = edit(
+            (steps) => {
+              next = focusAfterRemoval(steps, path);
+              return removeStep(steps, path);
+            },
+            { moves: true },
+          );
           if (changed) requestFocus(next);
         }}
       >
@@ -468,10 +479,17 @@ function StepRow({
     ) {
       event.preventDefault();
       const next = pathAfter(path);
-      if (edit((steps) => insertStep(steps, next, stepLike(step)))) requestFocus(next);
+      if (edit((steps) => insertStep(steps, next, stepLike(step)), { moves: true })) {
+        requestFocus(next);
+      }
       return;
     }
-    if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    if (
+      event.altKey &&
+      (event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+      // Alt+↓ is how a keyboard opens a select; the row does not take that away.
+      !(target instanceof HTMLSelectElement)
+    ) {
       event.preventDefault();
       move(event.key === 'ArrowUp' ? -1 : 1, target);
     }
@@ -486,8 +504,10 @@ function StepRow({
         // The innermost row decides, including deciding there is no drop here:
         // an enclosing block claiming the event would highlight itself instead.
         event.stopPropagation();
-        // Onto itself, or into its own subtree, there is nowhere to land.
-        if (!dragPath || pathsEqual(dragPath, path) || isDescendant(path, dragPath)) {
+        // Into its own subtree there is nowhere to land, and the gaps either
+        // side of the step are where it already is: offering a drop there
+        // would highlight a row and then do nothing.
+        if (!dragPath || movesNowhere(dragPath, path) || isDescendant(path, dragPath)) {
           setDropPath(null);
           return;
         }
@@ -501,7 +521,10 @@ function StepRow({
           draggable
           aria-hidden="true"
           className="cursor-grab px-1 text-gray-400 select-none"
-          onDragStart={() => {
+          onDragStart={(event) => {
+            // Firefox starts no drag at all from an element that sets no data.
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', label);
             // Starting a drag shows a drop zone at the end of every list, which
             // pushes rows down. Doing that inside `dragstart` moves the handle
             // out from under the pointer while Chrome is still deciding whether
@@ -644,7 +667,7 @@ function TailDropZone({ steps, path }: { steps: WorkoutStep[]; path: StepPath })
       className={`h-6 rounded-md border border-dashed ${active ? 'border-gray-900 bg-gray-50' : 'border-gray-200'}`}
       onDragOver={(event) => {
         event.stopPropagation();
-        if (isDescendant(tail, dragPath)) {
+        if (isDescendant(tail, dragPath) || movesNowhere(dragPath, tail)) {
           setDropPath(null);
           return;
         }
@@ -673,7 +696,7 @@ export function AddStepButtons({ steps, path }: { steps: WorkoutStep[]; path: St
   }, [focusHere, requestFocus]);
 
   function add(step: WorkoutStep) {
-    if (edit((current) => insertStep(current, where, step))) requestFocus(where);
+    if (edit((current) => insertStep(current, where, step), { moves: true })) requestFocus(where);
   }
 
   return (
@@ -710,7 +733,7 @@ export function AddStepButtons({ steps, path }: { steps: WorkoutStep[]; path: St
 }
 
 export default function StepEditor({ steps, path }: { steps: WorkoutStep[]; path: StepPath }) {
-  const { edit, dragPath, setDragPath, dropPath, setDropPath } = useEditor();
+  const { edit, generation, dragPath, setDragPath, dropPath, setDropPath } = useEditor();
   const root = path.length === 0;
 
   return (
@@ -732,27 +755,31 @@ export default function StepEditor({ steps, path }: { steps: WorkoutStep[]; path
         const to = dropPath;
         setDragPath(null);
         setDropPath(null);
-        if (from && to) edit((current) => moveStep(current, from, to));
+        if (from && to) edit((current) => moveStep(current, from, to), { moves: true });
       }}
       // Only leaving the whole tree clears the target. `dragleave` also fires
       // for every child the pointer crosses inside it, and clearing on each of
       // those re-rendered every row twice per crossing.
+      //
+      // Safari reports no `relatedTarget` on drag events, which would make
+      // every crossing look like leaving. Without one, the target stays put;
+      // `dragend` clears it at the end of the drag either way.
       onDragLeave={
         root
           ? (event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                setDropPath(null);
-              }
+              const to = event.relatedTarget as Node | null;
+              if (to && !event.currentTarget.contains(to)) setDropPath(null);
             }
           : undefined
       }
     >
       {steps.map((step, index) => {
         const stepPath = [...path, index];
-        if (step.kind === 'exercise')
-          return <ExerciseRow key={index} step={step} path={stepPath} />;
-        if (step.kind === 'rest') return <RestRow key={index} step={step} path={stepPath} />;
-        return <RepeatRow key={index} step={step} path={stepPath} />;
+        // Position plus generation: see `generation` on EditorApi.
+        const key = `${index}:${generation}`;
+        if (step.kind === 'exercise') return <ExerciseRow key={key} step={step} path={stepPath} />;
+        if (step.kind === 'rest') return <RestRow key={key} step={step} path={stepPath} />;
+        return <RepeatRow key={key} step={step} path={stepPath} />;
       })}
       <TailDropZone steps={steps} path={path} />
       {!root && (

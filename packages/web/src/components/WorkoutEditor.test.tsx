@@ -47,8 +47,14 @@ const savedSteps = async () => {
 const tailZones = () => document.querySelectorAll('li.border-dashed');
 
 /** Starts a drag; the drop zones appear once `dragstart` has returned, as in a browser. */
+/** jsdom implements no DataTransfer, which the handler fills in for Firefox. */
+const beginDrag = (handle: Element) =>
+  fireEvent.dragStart(handle, {
+    dataTransfer: { effectAllowed: 'none', setData: () => undefined },
+  });
+
 async function startDrag(handle: Element) {
-  fireEvent.dragStart(handle);
+  beginDrag(handle);
   await waitFor(() => expect(tailZones().length).toBeGreaterThan(0));
 }
 
@@ -149,10 +155,25 @@ describe('WorkoutEditor', () => {
     // A rest that ends on a lap press has no number box to focus.
     await user.selectOptions(screen.getAllByLabelText('Duration type')[1]!, 'open');
 
-    await user.keyboard('{Alt>}{ArrowUp}{/Alt}');
+    await user.click(screen.getByRole('button', { name: 'Move rest up' }));
 
     expect(store().currentWorkout?.steps).toMatchObject([{ kind: 'rest' }, { kind: 'exercise' }]);
-    expect(screen.getAllByLabelText('Duration type')[0]).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Move rest up' })).toHaveFocus();
+
+    // And a copy of it, which has no number box either, still takes the cursor.
+    await user.click(screen.getByRole('button', { name: 'Duplicate rest' }));
+    expect(screen.getAllByLabelText('Duration type')[1]).toHaveFocus();
+  });
+
+  it('leaves Alt+arrow on a select to the select, which is how it opens', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.click(screen.getByRole('button', { name: '+ Rest' }));
+
+    screen.getAllByLabelText('Duration type')[1]!.focus();
+    await user.keyboard('{Alt>}{ArrowUp}{/Alt}');
+
+    expect(store().currentWorkout?.steps.map((s) => s.kind)).toEqual(['exercise', 'rest']);
   });
 
   it('highlights the row inside a block that a drag is over, not the block', async () => {
@@ -260,7 +281,7 @@ describe('WorkoutEditor', () => {
     await user.click(screen.getAllByRole('button', { name: '+ Exercise' }).at(-1)!);
 
     // Chrome can cancel a drag whose handle moves during `dragstart`.
-    fireEvent.dragStart(screen.getAllByText('⠿').at(-1)!);
+    beginDrag(screen.getAllByText('⠿').at(-1)!);
     expect(tailZones()).toHaveLength(0);
     await waitFor(() => expect(tailZones()).toHaveLength(2));
   });
@@ -378,15 +399,15 @@ describe('WorkoutEditor', () => {
 
   it('keeps the drop target while the pointer crosses controls, until it leaves the tree', async () => {
     await store().createWorkout('Push Day');
-    store().editSteps(() => [exercise('A'), exercise('B')]);
+    store().editSteps(() => [exercise('A'), exercise('B'), exercise('C')]);
     render(<OpenWorkout />);
 
     await startDrag(screen.getAllByText('⠿')[0]!);
-    const b = screen.getAllByLabelText('Exercise')[1]!.closest('li')!;
+    const b = screen.getAllByLabelText('Exercise')[2]!.closest('li')!;
     fireEvent.dragOver(b);
     const [nameBox, repsBox] = [
-      screen.getAllByLabelText('Exercise')[1]!,
-      screen.getAllByLabelText('Reps')[1]!,
+      screen.getAllByLabelText('Exercise')[2]!,
+      screen.getAllByLabelText('Reps')[2]!,
     ];
     // jsdom has no DragEvent, and only a MouseEvent carries `relatedTarget`.
     const leave = (from: Element, to: Element | null) =>
@@ -396,8 +417,40 @@ describe('WorkoutEditor', () => {
     leave(nameBox, repsBox);
     expect(b).toHaveClass('border-gray-900');
 
+    // Safari reports no relatedTarget at all, so a missing one cannot mean
+    // "left the tree"; the end of the drag clears it instead.
     leave(b, null);
+    expect(b).toHaveClass('border-gray-900');
+
+    leave(b, document.body);
     expect(b).not.toHaveClass('border-gray-900');
+
+    fireEvent.dragOver(b);
+    expect(b).toHaveClass('border-gray-900');
+    fireEvent.dragEnd(screen.getAllByText('⠿')[0]!);
+    expect(b).not.toHaveClass('border-gray-900');
+  });
+
+  it('offers no drop on the gaps a step is already in', async () => {
+    await store().createWorkout('Push Day');
+    store().editSteps(() => [exercise('A'), exercise('B')]);
+    render(<OpenWorkout />);
+
+    await startDrag(screen.getAllByText('⠿')[0]!);
+    const rows = screen.getAllByLabelText('Exercise').map((box) => box.closest('li')!);
+
+    // Above A is where A is, and so is above B: dropping there moves nothing,
+    // so neither is highlighted or accepts the drop.
+    fireEvent.dragOver(rows[0]!);
+    expect(rows[0]).not.toHaveClass('border-gray-900');
+    fireEvent.dragOver(rows[1]!);
+    expect(rows[1]).not.toHaveClass('border-gray-900');
+
+    // The end of the list is below B, which does move it.
+    const tail = tailZones()[0]!;
+    fireEvent.dragOver(tail);
+    fireEvent.drop(tail);
+    expect(exerciseNames()).toEqual(['B', 'A']);
   });
 
   it('renders each list as list items only', async () => {
@@ -457,6 +510,35 @@ describe('WorkoutEditor', () => {
     expect(store().currentWorkout?.steps[0]).toMatchObject({ duration: { reps: 8 } });
     await user.type(reps, '5');
     expect(store().currentWorkout?.steps[0]).toMatchObject({ duration: { reps: 5 } });
+  });
+
+  it('never writes a number into the step that replaced the one being edited', async () => {
+    await store().createWorkout('Push Day');
+    store().editSteps(() => [
+      { ...exercise('A'), duration: { type: 'reps', reps: 8 } },
+      { ...exercise('B'), duration: { type: 'reps', reps: 10 } },
+    ]);
+    render(<OpenWorkout />);
+    const user = userEvent.setup();
+
+    const reps = screen.getAllByLabelText('Reps')[0]!;
+    await user.click(reps);
+    await user.clear(reps);
+    await user.type(reps, '10');
+    // Emptied again, so leaving the box would put A's original 8 back — but
+    // the row is about to hold B, whose reps happen to be 10 as well.
+    await user.clear(reps);
+    await user.keyboard('{Alt>}{ArrowDown}{/Alt}');
+
+    expect(
+      store().currentWorkout?.steps.map((step) => [
+        step.kind === 'exercise' ? step.exercise : step.kind,
+        step.kind === 'exercise' && step.duration.type === 'reps' ? step.duration.reps : null,
+      ]),
+    ).toEqual([
+      ['B', 10],
+      ['A', 10],
+    ]);
   });
 
   it('puts a number back when the box is left holding a value it rejected', async () => {
