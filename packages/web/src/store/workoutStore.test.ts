@@ -11,16 +11,19 @@ const store = () => useWorkoutStore.getState();
 const unsavedKeys = () =>
   Object.keys(localStorage).filter((key) => key.startsWith('workout-editor:unsaved:'));
 
-/** A safety copy as a tab that has since closed would have left it (see `storage/unsaved.ts`). */
+/** A safety copy as a tab that closed before writing it would have left it (see `storage/unsaved.ts`). */
 function leaveCopyFromClosedTab(
   workout: { id?: string; [field: string]: unknown },
-  editedAt: number,
+  baseSeq: number,
 ) {
   localStorage.setItem(
-    `workout-editor:unsaved:closed-tab:${workout.id ?? 'broken'}`,
-    JSON.stringify({ tab: 'closed-tab', version: 1, editedAt, workout }),
+    `workout-editor:unsaved:${workout.id ?? 'broken'}`,
+    JSON.stringify({ baseSeq, version: 1, workout }),
   );
 }
+
+/** The write order of a stored workout, which its safety copy is measured against. */
+const storedSeq = async (id: string) => (await storage.getStoredWorkout(id))?.seq ?? 0;
 
 /** The store reads a file through a thunk; tests hand it the text directly. */
 const asFile = (text: string) => () => Promise.resolve(text);
@@ -230,34 +233,35 @@ describe('workout store', () => {
 
     it('writes an edit a closed tab left behind when the library next loads', async () => {
       const workout = await storage.createWorkout('Push Day');
-      leaveCopyFromClosedTab({ ...workout, steps: [squat] }, Date.now() + 1_000);
+      leaveCopyFromClosedTab({ ...workout, steps: [squat] }, await storedSeq(workout.id));
 
       await store().loadLibrary();
 
       expect((await storage.getWorkout(workout.id))?.steps).toEqual([squat]);
       expect(store().summaries.map((s) => [s.name, s.stepCount])).toEqual([['Push Day', 1]]);
       expect(unsavedKeys()).toEqual([]);
+      expect(store().error).toBeNull();
     });
 
-    it('keeps a left-behind edit as a separate workout when the original was saved since', async () => {
+    it('drops a left-behind edit whose workout has been written since, and says so', async () => {
       const workout = await storage.createWorkout('Push Day');
-      // Edited before the stored record was last written, from another tab say.
-      leaveCopyFromClosedTab({ ...workout, steps: [squat] }, 0);
+      // Made against an earlier version than the one stored: writing it back
+      // would undo whatever was saved in between.
+      leaveCopyFromClosedTab({ ...workout, steps: [squat] }, (await storedSeq(workout.id)) - 1);
 
       await store().loadLibrary();
 
       expect((await storage.getWorkout(workout.id))?.steps).toEqual([]);
-      expect(store().summaries.map((s) => [s.name, s.stepCount])).toEqual([
-        ['Push Day (recovered)', 1],
-        ['Push Day', 0],
-      ]);
+      expect(store().summaries.map((s) => s.name)).toEqual(['Push Day']);
+      expect(store().error).toMatch(/has been saved since/);
       expect(unsavedKeys()).toEqual([]);
     });
 
     it('does not bring back a workout deleted since its edit was left behind', async () => {
       const workout = await storage.createWorkout('Push Day');
+      const seq = await storedSeq(workout.id);
       await storage.deleteWorkout(workout.id);
-      leaveCopyFromClosedTab({ ...workout, steps: [squat] }, Date.now() + 1_000);
+      leaveCopyFromClosedTab({ ...workout, steps: [squat] }, seq);
 
       await store().loadLibrary();
 
@@ -267,13 +271,120 @@ describe('workout store', () => {
 
     it('drops a left-behind copy that can never be restored, and says so', async () => {
       await storage.createWorkout('Push Day');
-      leaveCopyFromClosedTab({ not: 'a workout' }, Date.now());
+      leaveCopyFromClosedTab({ not: 'a workout' }, 1);
 
       await store().loadLibrary();
 
       expect(store().error).toMatch(/could not be restored/);
       expect(store().status).toBe('ready');
       expect(unsavedKeys()).toEqual([]);
+    });
+
+    it('keeps a copy written by a newer build for a build that understands it', async () => {
+      const workout = await storage.createWorkout('Push Day');
+      leaveCopyFromClosedTab(
+        { ...workout, schemaVersion: SCHEMA_VERSION + 1 },
+        await storedSeq(workout.id),
+      );
+
+      await store().loadLibrary();
+
+      // Valid, just not here: throwing it away would destroy the only copy.
+      expect(store().error).toMatch(/newer version/);
+      expect(unsavedKeys()).toHaveLength(1);
+    });
+
+    it('keeps a left-behind copy whose write failed, for the next load', async () => {
+      const workout = await storage.createWorkout('Push Day');
+      leaveCopyFromClosedTab({ ...workout, steps: [squat] }, await storedSeq(workout.id));
+      const put = vi.spyOn(storage, 'putWorkout').mockRejectedValue(new Error('disk full'));
+      try {
+        await store().loadLibrary();
+        expect(store().error).toMatch(/could not be restored.*disk full/);
+        expect(unsavedKeys()).toHaveLength(1);
+      } finally {
+        put.mockRestore();
+      }
+
+      await store().loadLibrary();
+      expect((await storage.getWorkout(workout.id))?.steps).toEqual([squat]);
+      expect(unsavedKeys()).toEqual([]);
+    });
+
+    it('stops restoring copies once the database itself fails', async () => {
+      const first = await storage.createWorkout('One');
+      const second = await storage.createWorkout('Two');
+      leaveCopyFromClosedTab({ ...first, steps: [squat] }, await storedSeq(first.id));
+      leaveCopyFromClosedTab({ ...second, steps: [squat] }, await storedSeq(second.id));
+      const read = vi.spyOn(storage, 'getStoredWorkout').mockRejectedValue(new Error('db blocked'));
+      try {
+        await store().loadLibrary();
+
+        // One failure, not one per copy, each waiting out its own timeout.
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(unsavedKeys()).toHaveLength(2);
+      } finally {
+        read.mockRestore();
+      }
+    });
+
+    it('does not bring back a workout deleted in another tab while it is open here', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      // Another tab deletes it; nothing tells this one.
+      await storage.deleteWorkout(id);
+
+      addStep();
+      await store().flushSteps();
+
+      expect(await storage.getWorkout(id)).toBeUndefined();
+      expect(store().currentWorkout).toBeNull();
+      expect(store().error).toMatch(/no longer in your library/);
+      expect(unsavedKeys()).toEqual([]);
+    });
+
+    it('refuses to export or duplicate a workout whose latest edits are unsaved', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      const put = vi.spyOn(storage, 'putWorkout').mockRejectedValue(new Error('disk full'));
+      try {
+        addStep();
+        await store().flushSteps();
+
+        await store().duplicateWorkout(id);
+        expect(store().error).toMatch(/have not been saved/);
+        expect(store().summaries).toHaveLength(1);
+
+        await store().exportWorkout(id);
+        expect(store().error).toMatch(/have not been saved/);
+      } finally {
+        put.mockRestore();
+      }
+    });
+
+    it('puts back the saved version when a discard beats a write it cannot stop', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      addStep();
+      await store().flushSteps();
+
+      // A write that is already under way when the user discards.
+      const realPut = storage.putWorkout;
+      const put = vi.spyOn(storage, 'putWorkout').mockImplementationOnce(async (workout) => {
+        const record = await realPut(workout);
+        store().discardChanges();
+        return record;
+      });
+      try {
+        addStep();
+        await store().flushSteps();
+      } finally {
+        put.mockRestore();
+      }
+
+      expect(store().currentWorkout).toBeNull();
+      expect((await storage.getWorkout(id))?.steps).toHaveLength(1);
+      expect(store().summaries[0]?.stepCount).toBe(1);
     });
 
     it('keeps an edit made while a rename is writing, and the new name', async () => {

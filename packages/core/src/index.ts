@@ -20,6 +20,7 @@ export {
   isDescendant,
   moveStep,
   moveStepBy,
+  movesNowhere,
   pathAfter,
   pathsEqual,
   pruneEmptyBlocks,

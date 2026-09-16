@@ -150,7 +150,7 @@ export function moveStep(steps: WorkoutStep[], from: StepPath, to: StepPath): Wo
   // back the same tree is what tells the caller nothing changed, so a drop in
   // place is not saved as an edit.
   const destination = shiftForRemoval(from, to);
-  if (pathsEqual(destination, from)) return steps;
+  if (movesNowhere(from, to)) return steps;
 
   const detached = detachStep(steps, from);
   if (detached === steps) return steps;
@@ -161,6 +161,16 @@ export function moveStep(steps: WorkoutStep[], from: StepPath, to: StepPath): Wo
   if (inserted === detached) return steps;
 
   return pruneEmptyBlocks(inserted);
+}
+
+/**
+ * True when dropping the step at `from` at `to` would put it back where it
+ * already is: the gap directly above it, and the gap directly below it, are
+ * both where it is now. The editor asks before offering a drop, so it never
+ * highlights a target that would do nothing.
+ */
+export function movesNowhere(from: StepPath, to: StepPath): boolean {
+  return pathsEqual(shiftForRemoval(from, to), from);
 }
 
 /**

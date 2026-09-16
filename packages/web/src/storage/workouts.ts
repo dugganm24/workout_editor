@@ -109,15 +109,13 @@ export async function getWorkout(id: string): Promise<Workout | undefined> {
   return (await getStoredWorkout(id))?.workout;
 }
 
-/** `getWorkout` plus when it was last written, for callers deciding whether they hold something newer. */
+/** `getWorkout` plus its write order, for callers checking that it is still the record they read. */
 export async function getStoredWorkout(
   id: string,
-): Promise<{ workout: Workout; updatedAt: number } | undefined> {
+): Promise<{ workout: Workout; seq: number } | undefined> {
   const db = await getDb();
   const record = await db.get(WORKOUT_STORE, id);
-  return record
-    ? { workout: migrateWorkout(record.workout), updatedAt: record.updatedAt }
-    : undefined;
+  return record ? { workout: migrateWorkout(record.workout), seq: record.seq } : undefined;
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   isDescendant,
   moveStep,
   moveStepBy,
+  movesNowhere,
   pathAfter,
   pruneEmptyBlocks,
   removeStep,
@@ -165,6 +166,19 @@ describe('moveStep', () => {
   it('refuses to move a block inside itself', () => {
     const before = tree();
     expect(moveStep(before, [1], [1, 0])).toBe(before);
+  });
+});
+
+describe('movesNowhere', () => {
+  it('knows the two gaps that are where the step already is', () => {
+    // Above itself, and below itself.
+    expect(movesNowhere([1], [1])).toBe(true);
+    expect(movesNowhere([1], [2])).toBe(true);
+    expect(movesNowhere([1], [3])).toBe(false);
+    expect(movesNowhere([1], [0])).toBe(false);
+    // Only within one list: the same indices in a block are a different place.
+    expect(movesNowhere([1], [1, 1])).toBe(false);
+    expect(movesNowhere([1, 0], [1, 1])).toBe(true);
   });
 });
 
