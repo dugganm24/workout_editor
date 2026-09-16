@@ -51,7 +51,6 @@ export interface WorkoutState {
   renameWorkout: (id: string, name: string) => Promise<void>;
   duplicateWorkout: (id: string) => Promise<void>;
   deleteWorkout: (id: string) => Promise<void>;
-  /** Takes a reader rather than text so a failed read reports like any other import error. */
   /**
    * Applies a step-tree edit and saves it in the background. Synchronous on
    * purpose: the editor renders from `currentWorkout`, so a keystroke has to
@@ -60,6 +59,7 @@ export interface WorkoutState {
   editSteps: (edit: (steps: WorkoutStep[]) => WorkoutStep[]) => void;
   /** Writes a pending autosave immediately. Resolves once it has been written. */
   flushSteps: () => Promise<void>;
+  /** Takes a reader rather than text so a failed read reports like any other import error. */
   importWorkoutFile: (readFile: () => Promise<string>) => Promise<void>;
   exportWorkout: (id: string) => Promise<void>;
   exportLibrary: () => Promise<void>;

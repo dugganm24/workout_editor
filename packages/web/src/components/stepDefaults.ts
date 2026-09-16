@@ -9,16 +9,21 @@ import type { ExerciseStep, RepeatBlock, RestStep, WorkoutStep } from '@workout-
  */
 export const PLACEHOLDER_CATEGORY = 'UNKNOWN';
 
+/** What a step counts by until the user says otherwise; also what the editor
+ *  fills in when a step is switched to that kind of duration. */
+export const DEFAULT_REPS = 8;
+export const DEFAULT_SECONDS = 60;
+
 export function newExerciseStep(): ExerciseStep {
   return {
     kind: 'exercise',
     category: PLACEHOLDER_CATEGORY,
-    duration: { type: 'reps', reps: 8 },
+    duration: { type: 'reps', reps: DEFAULT_REPS },
   };
 }
 
 export function newRestStep(): RestStep {
-  return { kind: 'rest', duration: { type: 'time', seconds: 60 } };
+  return { kind: 'rest', duration: { type: 'time', seconds: DEFAULT_SECONDS } };
 }
 
 export function newRepeatBlock(): RepeatBlock {

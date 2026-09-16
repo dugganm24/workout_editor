@@ -638,30 +638,28 @@ describe('WorkoutEditor', () => {
     const storage = await import('../storage/workouts.ts');
     const user = await openEditor();
     const id = store().currentWorkout!.id;
-    const failWrites = () =>
-      vi.spyOn(storage, 'putWorkout').mockRejectedValue(new Error('disk full'));
-
-    let put = failWrites();
-    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
-    await user.click(screen.getByRole('button', { name: '← Back to library' }));
-    // Still here, and told why.
-    expect(await screen.findByRole('alert')).toHaveTextContent('disk full');
-    expect(screen.getByLabelText('Exercise')).toBeInTheDocument();
-
-    put.mockRestore();
-    await user.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
-    expect((await storage.getWorkout(id))?.steps).toHaveLength(1);
-
-    // When saving is not coming back, a way out that does not need it.
-    put = failWrites();
+    const put = vi.spyOn(storage, 'putWorkout');
     try {
+      put.mockRejectedValue(new Error('disk full'));
+      await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+      await user.click(screen.getByRole('button', { name: '← Back to library' }));
+      // Still here, and told why.
+      expect(await screen.findByRole('alert')).toHaveTextContent('disk full');
+      expect(screen.getByLabelText('Exercise')).toBeInTheDocument();
+
+      put.mockRestore();
+      await user.click(screen.getByRole('button', { name: 'Try again' }));
+      await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+      expect((await storage.getWorkout(id))?.steps).toHaveLength(1);
+
+      // When saving is not coming back, a way out that does not need it.
+      vi.spyOn(storage, 'putWorkout').mockRejectedValue(new Error('disk full'));
       await user.click(screen.getByRole('button', { name: '+ Rest' }));
       await store().flushSteps();
       await user.click(await screen.findByRole('button', { name: 'Discard changes' }));
       expect(store().currentWorkout).toBeNull();
     } finally {
-      put.mockRestore();
+      vi.restoreAllMocks();
     }
     expect((await storage.getWorkout(id))?.steps).toHaveLength(1);
   });

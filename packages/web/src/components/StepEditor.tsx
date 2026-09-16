@@ -30,6 +30,8 @@ import {
   type WorkoutStep,
 } from '@workout-editor/core';
 import {
+  DEFAULT_REPS,
+  DEFAULT_SECONDS,
   newExerciseStep,
   newRepeatBlock,
   newRestStep,
@@ -275,8 +277,8 @@ function DurationFields({ step, path }: { step: ExerciseStep | RestStep; path: S
           value={step.duration.type}
           onChange={(event) => {
             const type = event.target.value;
-            if (type === 'reps') setDuration({ type: 'reps', reps: 8 });
-            if (type === 'time') setDuration({ type: 'time', seconds: 60 });
+            if (type === 'reps') setDuration({ type: 'reps', reps: DEFAULT_REPS });
+            if (type === 'time') setDuration({ type: 'time', seconds: DEFAULT_SECONDS });
             if (type === 'open') setDuration({ type: 'open' });
           }}
         >
