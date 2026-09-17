@@ -3,6 +3,8 @@ import { insertStep, SCHEMA_VERSION, type WorkoutStep } from '@workout-editor/co
 import { serializeLibrary, serializeWorkout } from '../storage/files.ts';
 import * as storage from '../storage/workouts.ts';
 import { newWorkout } from '../storage/workouts.ts';
+import { getDb, WORKOUT_STORE } from '../storage/db.ts';
+import { resetApp } from '../testing.ts';
 import { useWorkoutStore } from './workoutStore.ts';
 
 const store = () => useWorkoutStore.getState();
@@ -473,6 +475,68 @@ describe('workout store', () => {
       expect(store().currentWorkout).toBeNull();
       expect((await storage.getWorkout(id))?.steps).toHaveLength(1);
       expect(store().summaries[0]?.stepCount).toBe(1);
+    });
+
+    it('saves without re-reading the stored workout through validation', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      // As a tab on a newer build would have left it: still there, but nothing
+      // this build can parse. Saving must not depend on reading it.
+      const db = await getDb();
+      const stored = (await db.get(WORKOUT_STORE, id))!;
+      await db.put(WORKOUT_STORE, {
+        ...stored,
+        workout: { ...stored.workout, schemaVersion: SCHEMA_VERSION + 1 } as typeof stored.workout,
+      });
+
+      addStep();
+      await store().flushSteps();
+
+      expect(store().saveError).toBeNull();
+      expect(store().currentWorkout?.steps).toHaveLength(1);
+      expect((await storage.getWorkout(id))?.steps).toHaveLength(1);
+    });
+
+    it('mentions a copy it cannot read once, not on every return to the library', async () => {
+      const workout = await storage.createWorkout('Push Day');
+      leaveCopyFromClosedTab(
+        { ...workout, schemaVersion: SCHEMA_VERSION + 1 },
+        await storedSeq(workout.id),
+      );
+
+      await store().loadLibrary();
+      expect(store().error).toMatch(/newer version/);
+
+      store().clearError();
+      await store().loadLibrary();
+
+      // The copy is still kept, and still unreadable; saying so again on every
+      // load would be a banner the user can never clear.
+      expect(store().error).toBeNull();
+      expect(unsavedKeys()).toHaveLength(1);
+    });
+
+    it('leaves no edit of its own behind when the app is reset between tests', async () => {
+      await store().createWorkout('Push Day');
+      const put = vi.spyOn(storage, 'putWorkout').mockRejectedValue(new Error('disk full'));
+      try {
+        addStep();
+        await store().flushSteps();
+        expect(store().saveError).toBe('disk full');
+
+        // Writes are still failing as the next test starts, so the flush in
+        // here cannot clear the pending edit on its way out.
+        await resetApp();
+      } finally {
+        put.mockRestore();
+      }
+
+      // Whatever could not be written is gone with it: the next test's first
+      // action must not be answered about a workout it never opened.
+      await store().createWorkout('Next test');
+      expect(store().error).toBeNull();
+      expect(store().saveError).toBeNull();
+      expect(unsavedKeys()).toEqual([]);
     });
 
     it('keeps an edit made while a rename is writing, and the new name', async () => {

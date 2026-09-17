@@ -109,6 +109,16 @@ export async function getWorkout(id: string): Promise<Workout | undefined> {
   return (await getStoredWorkout(id))?.workout;
 }
 
+/**
+ * Whether a record is there, without reading the workout inside it. Checking
+ * existence through `getWorkout` would validate the whole step tree, and would
+ * fail outright on a record this build cannot parse.
+ */
+export async function workoutExists(id: string): Promise<boolean> {
+  const db = await getDb();
+  return (await db.getKey(WORKOUT_STORE, id)) !== undefined;
+}
+
 /** `getWorkout` plus its write order, for callers checking that it is still the record they read. */
 export async function getStoredWorkout(
   id: string,

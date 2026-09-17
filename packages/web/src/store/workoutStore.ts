@@ -154,6 +154,8 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
   let lastSavedSeq = 0;
   /** Bumped by a discard, so a write already under way cannot keep what was discarded. */
   let discards = 0;
+  /** Copies already complained about, so a kept one does not complain on every load. */
+  const reported = new Set<string>();
 
   /** Puts a workout on screen with no unsaved edits behind it. */
   function openInEditor(workout: Workout, seq: number): void {
@@ -211,9 +213,7 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
       // Deleted in another tab: writing would bring it back, undoing a delete
       // the user meant. Two tabs *editing* one workout is still last writer
       // wins — refusing to save what is on screen would be worse.
-      if (!(await storage.getStoredWorkout(save.workout.id))) {
-        throw new WorkoutNotFoundError();
-      }
+      if (!(await storage.workoutExists(save.workout.id))) throw new WorkoutNotFoundError();
       record = await storage.putWorkout(save.workout);
     } catch (error) {
       if (discardsAtStart !== discards) return;
@@ -330,7 +330,12 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
       if (copy.id === open) continue;
       try {
         const problem = await restoreCopy(copy);
-        if (problem) set({ error: problem });
+        // A copy this build cannot read is kept, and would otherwise say so
+        // again on every single return to the library.
+        if (problem && !reported.has(`${copy.key}:${copy.version}`)) {
+          reported.add(`${copy.key}:${copy.version}`);
+          set({ error: problem });
+        }
       } catch (error) {
         set({
           error: `Unsaved changes from a closed tab could not be restored. ${errorMessage(error)}`,
