@@ -185,59 +185,72 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
     // this as "everything I typed is on disk".
     if (!pendingSave) return queue;
     return serialize(async () => {
-      // Taken when the write runs, not when it was queued, so it is always the
-      // newest edit.
-      const save = pendingSave;
-      pendingSave = undefined;
-      if (!save) return;
-      const discardsAtStart = discards;
-      const previous = lastSaved;
-
-      let record: WorkoutRecord;
+      // Nothing in here may reject: "← Back to library" and "Try again" wait on
+      // it, and a rejection would leave them doing nothing at all, silently.
       try {
-        // Deleted in another tab: writing would bring it back, undoing a delete
-        // the user meant. Two tabs *editing* one workout is still last writer
-        // wins — refusing to save what is on screen would be worse.
-        if (!(await storage.getStoredWorkout(save.workout.id))) {
-          throw new WorkoutNotFoundError();
-        }
-        record = await storage.putWorkout(save.workout);
+        await write();
       } catch (error) {
-        if (discardsAtStart !== discards) return;
-        if (error instanceof WorkoutNotFoundError) {
-          clearUnsaved(save.workout.id);
-          set({ currentWorkout: null, saveError: null, error: errorMessage(error) });
-          await refresh();
-          return;
-        }
-        // Put back unless something newer was typed meanwhile (that copy has
-        // this edit in it too), so the next edit, close or "Try again" retries
-        // the write instead of the edit existing nowhere but on screen.
-        pendingSave ??= save;
-        set({ saveError: errorMessage(error) });
-        return;
+        set({ error: errorMessage(error) });
       }
+    });
+  }
 
-      clearUnsaved(save.workout.id, save.version);
-      if (discardsAtStart !== discards) {
-        // Discarded while this was writing. The write cannot be called back, so
-        // put the version it replaced back in its place.
-        if (previous) await storage.putWorkout(previous).catch(() => undefined);
+  async function write(): Promise<void> {
+    // Taken when the write runs, not when it was queued, so it is always the
+    // newest edit.
+    const save = pendingSave;
+    pendingSave = undefined;
+    if (!save) return;
+    const discardsAtStart = discards;
+    const previous = lastSaved;
+
+    let record: WorkoutRecord;
+    try {
+      // Deleted in another tab: writing would bring it back, undoing a delete
+      // the user meant. Two tabs *editing* one workout is still last writer
+      // wins — refusing to save what is on screen would be worse.
+      if (!(await storage.getStoredWorkout(save.workout.id))) {
+        throw new WorkoutNotFoundError();
+      }
+      record = await storage.putWorkout(save.workout);
+    } catch (error) {
+      if (discardsAtStart !== discards) return;
+      if (error instanceof WorkoutNotFoundError) {
+        clearUnsaved(save.workout.id);
+        set({ currentWorkout: null, saveError: null, error: errorMessage(error) });
         await refresh();
         return;
       }
+      // Put back unless something newer was typed meanwhile (that copy has
+      // this edit in it too), so the next edit, close or "Try again" retries
+      // the write instead of the edit existing nowhere but on screen.
+      pendingSave ??= save;
+      set({ saveError: errorMessage(error) });
+      return;
+    }
 
-      lastSaved = save.workout;
-      lastSavedSeq = record.seq;
-      if (get().saveError !== null) set({ saveError: null });
-      // Only this workout's summary changed. Re-reading and re-validating the
-      // whole library on every pause in typing held up the queue for nothing;
-      // the list reloads in full when the library is shown again.
-      const summary = storage.summarize(record, save.workout);
-      set((state) => ({
-        summaries: [summary, ...state.summaries.filter((s) => s.id !== summary.id)],
-      }));
-    });
+    // Only the copy this write holds. Without a version there is no copy of
+    // this edit — its own stash failed — and the one in storage belongs to a
+    // later edit that still needs it.
+    if (save.version !== undefined) clearUnsaved(save.workout.id, save.version);
+    if (discardsAtStart !== discards) {
+      // Discarded while this was writing. The write cannot be called back, so
+      // put the version it replaced back in its place.
+      if (previous) await storage.putWorkout(previous).catch(() => undefined);
+      await refresh();
+      return;
+    }
+
+    lastSaved = save.workout;
+    lastSavedSeq = record.seq;
+    if (get().saveError !== null) set({ saveError: null });
+    // Only this workout's summary changed. Re-reading and re-validating the
+    // whole library on every pause in typing held up the queue for nothing;
+    // the list reloads in full when the library is shown again.
+    const summary = storage.summarize(record, save.workout);
+    set((state) => ({
+      summaries: [summary, ...state.summaries.filter((s) => s.id !== summary.id)],
+    }));
   }
 
   // A page that is only being switched away from has all the time it needs,
@@ -251,19 +264,24 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
 
   /**
    * Writes back one copy a closed tab left behind, if the workout it was edited
-   * from is still the one stored. Returns what happened, so the caller can say
-   * so; storage failures are thrown, since the next copy would only fail too.
+   * from is still the one stored. Returns what to tell the user, if anything.
+   *
+   * Storage failures are thrown, since the next copy would only fail the same
+   * way; anything wrong with the copy itself is returned, so the copies after
+   * it still get their turn.
    */
-  async function restoreCopy(copy: UnsavedCopy): Promise<'restored' | 'dropped' | 'stale'> {
+  async function restoreCopy(copy: UnsavedCopy): Promise<string | undefined> {
+    const failed = (error: unknown) =>
+      `Unsaved changes from a closed tab could not be restored. ${errorMessage(error)}`;
+
     let workout: Workout;
     try {
       workout = migrateWorkout(copy.workout);
     } catch (error) {
       // A copy written by a newer build is valid, just not here: a build that
       // understands it can still write it. Anything else never will be.
-      if (error instanceof UnsupportedSchemaVersionError) throw error;
-      discardCopy(copy);
-      throw error;
+      if (!(error instanceof UnsupportedSchemaVersionError)) discardCopy(copy);
+      return failed(error);
     }
 
     const stored = await storage.getStoredWorkout(workout.id);
@@ -271,23 +289,23 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
     // writing it would undo that.
     if (!stored) {
       discardCopy(copy);
-      return 'dropped';
+      return undefined;
     }
     if (stored.seq !== copy.baseSeq) {
       discardCopy(copy);
-      return 'stale';
+      return 'Unsaved changes from a closed tab were dropped: that workout has been saved since.';
     }
 
     // Taken before the write, so two tabs loading at once cannot both write it.
     const claimed = claimUnsaved(copy);
-    if (claimed === undefined) return 'dropped';
+    if (claimed === undefined) return undefined;
     try {
       await storage.putWorkout(workout);
     } catch (error) {
       returnUnsaved(copy, claimed);
       throw error;
     }
-    return 'restored';
+    return undefined;
   }
 
   /**
@@ -301,12 +319,8 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
       // This tab is still editing it, and its own autosave is responsible.
       if (copy.id === open) continue;
       try {
-        if ((await restoreCopy(copy)) === 'stale') {
-          set({
-            error:
-              'Unsaved changes from a closed tab were dropped: that workout has been saved since.',
-          });
-        }
+        const problem = await restoreCopy(copy);
+        if (problem) set({ error: problem });
       } catch (error) {
         set({
           error: `Unsaved changes from a closed tab could not be restored. ${errorMessage(error)}`,

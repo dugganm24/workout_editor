@@ -562,6 +562,10 @@ function humanize(key: string): string {
 
 function ExerciseRow({ step, path }: { step: ExerciseStep; path: StepPath }) {
   const { edit } = useEditor();
+  // The model has no room for a name that is only spaces, and stores none with
+  // spaces around it. A draft holds what was typed meanwhile, so the box does
+  // not swallow the space between two words as it is typed.
+  const [draft, setDraft] = useState<string | null>(null);
   // A real category means the step came from Garmin's taxonomy (an import or a
   // backup), and its `exercise` is a key within that category, not free text.
   // Editing a key character by character would save one that exists nowhere,
@@ -587,18 +591,21 @@ function ExerciseRow({ step, path }: { step: ExerciseStep; path: StepPath }) {
           aria-label="Exercise"
           placeholder="Exercise name"
           className="min-w-40 flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm font-medium focus:border-gray-500 focus:outline-none"
-          value={step.exercise ?? ''}
+          value={draft ?? step.exercise ?? ''}
           onChange={(event) => {
-            const name = event.target.value;
+            const typed = event.target.value;
+            setDraft(typed);
+            const name = typed.trim();
             edit((steps) =>
               replaceStep(steps, path, {
                 ...step,
                 // Absent rather than empty: `exercise` is optional in the model,
                 // and "" would be a name the schema rejects.
-                exercise: name.trim() === '' ? undefined : name,
+                exercise: name === '' ? undefined : name,
               }),
             );
           }}
+          onBlur={() => setDraft(null)}
         />
       )}
       <DurationFields step={step} path={path} />

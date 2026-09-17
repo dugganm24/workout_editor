@@ -231,6 +231,68 @@ describe('workout store', () => {
       expect((await storage.getWorkout(id))?.steps).toEqual([]);
     });
 
+    it('keeps the copy of a later edit when an earlier one could not be copied', async () => {
+      await store().createWorkout('Push Day');
+      const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('quota exceeded');
+      });
+      try {
+        // This edit gets no safety copy of its own.
+        addStep();
+      } finally {
+        full.mockRestore();
+      }
+
+      // A second edit, copied normally, while the first is being written.
+      const realPut = storage.putWorkout;
+      const put = vi.spyOn(storage, 'putWorkout').mockImplementationOnce((workout) => {
+        addStep();
+        return realPut(workout);
+      });
+      try {
+        await store().flushSteps();
+      } finally {
+        put.mockRestore();
+      }
+
+      // The first write holds no copy, so it has none to clear: clearing
+      // whatever is there would take the second edit's only copy with it.
+      expect(unsavedKeys()).toHaveLength(1);
+    });
+
+    it('restores the copies it can when one of them cannot be read', async () => {
+      const newer = await storage.createWorkout('From a newer build');
+      const ordinary = await storage.createWorkout('Push Day');
+      leaveCopyFromClosedTab(
+        { ...newer, schemaVersion: SCHEMA_VERSION + 1 },
+        await storedSeq(newer.id),
+      );
+      leaveCopyFromClosedTab({ ...ordinary, steps: [squat] }, await storedSeq(ordinary.id));
+
+      await store().loadLibrary();
+
+      // The unreadable one is kept for a build that understands it, and does
+      // not stand in the way of the one behind it — on this load or any later one.
+      expect(store().error).toMatch(/newer version/);
+      expect((await storage.getWorkout(ordinary.id))?.steps).toEqual([squat]);
+      expect(unsavedKeys()).toHaveLength(1);
+    });
+
+    it('closes without rejecting when the library cannot be re-read', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      addStep();
+      // Deleted in another tab, and the re-read that follows fails too.
+      await storage.deleteWorkout(id);
+      const list = vi.spyOn(storage, 'listWorkouts').mockRejectedValue(new Error('db blocked'));
+      try {
+        await expect(store().closeWorkout()).resolves.toBeUndefined();
+        expect(store().error).not.toBeNull();
+      } finally {
+        list.mockRestore();
+      }
+    });
+
     it('writes an edit a closed tab left behind when the library next loads', async () => {
       const workout = await storage.createWorkout('Push Day');
       leaveCopyFromClosedTab({ ...workout, steps: [squat] }, await storedSeq(workout.id));

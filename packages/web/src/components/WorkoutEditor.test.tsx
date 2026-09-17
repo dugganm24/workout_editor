@@ -46,13 +46,13 @@ const savedSteps = async () => {
 /** The drop zones a drag shows at the end of every list. */
 const tailZones = () => document.querySelectorAll('li.border-dashed');
 
-/** Starts a drag; the drop zones appear once `dragstart` has returned, as in a browser. */
 /** jsdom implements no DataTransfer, which the handler fills in for Firefox. */
 const beginDrag = (handle: Element) =>
   fireEvent.dragStart(handle, {
     dataTransfer: { effectAllowed: 'none', setData: () => undefined },
   });
 
+/** Starts a drag; the drop zones appear once `dragstart` has returned, as in a browser. */
 async function startDrag(handle: Element) {
   beginDrag(handle);
   await waitFor(() => expect(tailZones().length).toBeGreaterThan(0));
@@ -92,6 +92,21 @@ describe('WorkoutEditor', () => {
     await user.click(screen.getByRole('button', { name: '+ Rest' }));
     await user.keyboard('{Enter}');
     expect(screen.getAllByText('Rest')).toHaveLength(2);
+  });
+
+  it('lets a name be typed with spaces, and stores it without the ones around it', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    const name = screen.getByLabelText('Exercise');
+
+    // The space before a word is typed like any other character...
+    await user.type(name, ' Back Squat ');
+    expect(name).toHaveValue(' Back Squat ');
+    // ...but the model has no name made only of spaces, and keeps none around it.
+    expect(store().currentWorkout?.steps[0]).toMatchObject({ exercise: 'Back Squat' });
+
+    await user.tab();
+    expect(name).toHaveValue('Back Squat');
   });
 
   it('reorders with Alt+arrow and keeps the cursor on the step that moved', async () => {
