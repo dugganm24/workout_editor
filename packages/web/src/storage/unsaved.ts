@@ -15,6 +15,11 @@ import type { Workout } from '@workout-editor/core';
  * record is still that one, so no clocks are compared and nobody else's write
  * is overwritten.
  *
+ * Two tabs editing one workout share the one copy, and the last edit copied
+ * wins it — the same last-writer-wins the rest of the app has. What a copy is
+ * never allowed to do is stand in for an edit it does not contain, so each one
+ * carries an id of its own that says which edit it holds.
+ *
  * Every access is guarded: storage can be disabled or full, and a copy that
  * cannot be written is no worse than not having one.
  */
@@ -27,12 +32,11 @@ export interface UnsavedCopy {
   /** The workout it holds an edit of. */
   id: string;
   baseSeq: number;
-  version: number;
+  /** Which edit this copy holds. Unique per copy, so no other tab's can match it. */
+  version: string;
   /** Unvalidated: it goes through the same checks as any other write. */
   workout: unknown;
 }
-
-let lastVersion = 0;
 
 function keyFor(id: string): string {
   return PREFIX + id;
@@ -43,7 +47,7 @@ function read(key: string): UnsavedCopy | undefined {
     const raw = localStorage.getItem(key);
     if (raw === null) return undefined;
     const value = JSON.parse(raw) as Partial<UnsavedCopy>;
-    if (typeof value.baseSeq !== 'number' || typeof value.version !== 'number') return undefined;
+    if (typeof value.baseSeq !== 'number' || typeof value.version !== 'string') return undefined;
     return {
       key,
       id: key.slice(PREFIX.length),
@@ -63,8 +67,10 @@ function read(key: string): UnsavedCopy | undefined {
  * has been written. Returns undefined if the copy could not be written, and
  * removes any older one: a copy that is not the current edit is worse than none.
  */
-export function stashUnsaved(workout: Workout, baseSeq: number): number | undefined {
-  const version = ++lastVersion;
+export function stashUnsaved(workout: Workout, baseSeq: number): string | undefined {
+  // Not a counter: two tabs would count the same way, and each would answer to
+  // the other's version when clearing its own copy.
+  const version = crypto.randomUUID();
   try {
     localStorage.setItem(keyFor(workout.id), JSON.stringify({ baseSeq, version, workout }));
     return version;
@@ -79,7 +85,7 @@ export function stashUnsaved(workout: Workout, baseSeq: number): number | undefi
  * version: an edit made while the previous one was being written keeps its own
  * copy until that is written too.
  */
-export function clearUnsaved(id: string, version?: number): void {
+export function clearUnsaved(id: string, version?: string): void {
   const key = keyFor(id);
   try {
     if (version !== undefined && read(key)?.version !== version) return;

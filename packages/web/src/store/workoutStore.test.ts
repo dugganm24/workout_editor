@@ -18,7 +18,7 @@ function leaveCopyFromClosedTab(
 ) {
   localStorage.setItem(
     `workout-editor:unsaved:${workout.id ?? 'broken'}`,
-    JSON.stringify({ baseSeq, version: 1, workout }),
+    JSON.stringify({ baseSeq, version: 'from-a-closed-tab', workout }),
   );
 }
 
@@ -258,6 +258,32 @@ describe('workout store', () => {
       // The first write holds no copy, so it has none to clear: clearing
       // whatever is there would take the second edit's only copy with it.
       expect(unsavedKeys()).toHaveLength(1);
+    });
+
+    it('measures the copy of an edit made mid-write against what that write stored', async () => {
+      await store().createWorkout('Push Day');
+      const id = store().currentWorkout!.id;
+      addStep();
+
+      // Typed while the first edit is being written, so it was copied against
+      // the record that write is about to replace.
+      const realPut = storage.putWorkout;
+      const put = vi.spyOn(storage, 'putWorkout').mockImplementationOnce((workout) => {
+        addStep();
+        return realPut(workout);
+      });
+      try {
+        await store().flushSteps();
+      } finally {
+        put.mockRestore();
+      }
+
+      // Left measured against the older record, the next load would read this
+      // copy as stale and drop it — the case it exists for.
+      const copy = JSON.parse(localStorage.getItem(unsavedKeys()[0]!) ?? '{}') as {
+        baseSeq?: number;
+      };
+      expect(copy.baseSeq).toBe(await storedSeq(id));
     });
 
     it('restores the copies it can when one of them cannot be read', async () => {

@@ -142,10 +142,12 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
   interface PendingSave {
     workout: Workout;
     /** Of its safety copy, which is removed only once this version is written. Absent if it could not be copied. */
-    version: number | undefined;
+    version: string | undefined;
   }
 
   let pendingSave: PendingSave | undefined;
+  /** Read through a call: an edit made during an await is invisible to narrowing. */
+  const pendingNow = (): PendingSave | undefined => pendingSave;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   /** The open workout as last written, and the write order that write took. */
   let lastSaved: Workout | undefined;
@@ -243,6 +245,14 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
 
     lastSaved = save.workout;
     lastSavedSeq = record.seq;
+    // An edit typed while this was writing was copied against the record this
+    // write has just replaced. Copy it again against the new one, or the next
+    // load would read it as older than what is stored and drop it — in the very
+    // window ("the tab closed mid-write") the copies exist for.
+    const newer = pendingNow();
+    if (newer) {
+      pendingSave = { workout: newer.workout, version: stashUnsaved(newer.workout, lastSavedSeq) };
+    }
     if (get().saveError !== null) set({ saveError: null });
     // Only this workout's summary changed. Re-reading and re-validating the
     // whole library on every pause in typing held up the queue for nothing;
