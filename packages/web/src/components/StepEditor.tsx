@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import {
+  countLeafSteps,
   duplicateStep,
   getStep,
   insertStep,
@@ -364,9 +365,25 @@ function useMoveBy(path: StepPath): (delta: number, control: Element) => void {
   };
 }
 
-function RowActions({ path, label }: { path: StepPath; label: string }) {
+function RowActions({ step, path, label }: { step: WorkoutStep; path: StepPath; label: string }) {
   const { edit, requestFocus } = useEditor();
   const move = useMoveBy(path);
+  // A block holds steps that would go with it, and nothing here can be undone,
+  // so its Delete asks first. One click arms it, the next one deletes.
+  const [armed, setArmed] = useState(false);
+  const nested = step.kind === 'repeat' ? countLeafSteps(step.steps) : 0;
+
+  function remove() {
+    let next: StepPath = [];
+    const changed = edit(
+      (steps) => {
+        next = focusAfterRemoval(steps, path);
+        return removeStep(steps, path);
+      },
+      { moves: true },
+    );
+    if (changed) requestFocus(next);
+  }
 
   return (
     <div className="flex items-center gap-1">
@@ -400,21 +417,27 @@ function RowActions({ path, label }: { path: StepPath; label: string }) {
       </button>
       <button
         type="button"
-        aria-label={`Delete ${label}`}
-        className="rounded-md border border-gray-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+        aria-label={
+          armed
+            ? `Confirm deleting ${label} and its ${nested} step${nested === 1 ? '' : 's'}`
+            : `Delete ${label}`
+        }
+        className={`rounded-md border px-2 py-1 text-xs ${
+          armed
+            ? 'border-red-600 bg-red-600 font-medium text-white'
+            : 'border-gray-300 text-red-700 hover:bg-red-50'
+        }`}
         onClick={() => {
-          let next: StepPath = [];
-          const changed = edit(
-            (steps) => {
-              next = focusAfterRemoval(steps, path);
-              return removeStep(steps, path);
-            },
-            { moves: true },
-          );
-          if (changed) requestFocus(next);
+          if (nested > 0 && !armed) {
+            setArmed(true);
+            return;
+          }
+          remove();
         }}
+        // Anywhere else, and it is no longer the click the user is making.
+        onBlur={() => setArmed(false)}
       >
-        Delete
+        {armed ? `Delete ${nested} step${nested === 1 ? '' : 's'}?` : 'Delete'}
       </button>
     </div>
   );
@@ -543,11 +566,16 @@ function StepRow({
         </span>
         {children}
         <div className="ml-auto">
-          <RowActions path={path} label={label} />
+          <RowActions step={step} path={path} label={label} />
         </div>
       </div>
     </li>
   );
+}
+
+/** Where a row sits in its own list, counting from one, as a reader would say it. */
+function position(path: StepPath): number {
+  return (path[path.length - 1] ?? 0) + 1;
 }
 
 /** Category and exercise keys are Garmin's SCREAMING_SNAKE enums until the taxonomy lands. */
@@ -573,9 +601,11 @@ function ExerciseRow({ step, path }: { step: ExerciseStep; path: StepPath }) {
   // read-only until the exercise picker can offer valid choices. Steps built
   // here carry the placeholder category, and their name is theirs to type.
   const fromTaxonomy = step.category !== PLACEHOLDER_CATEGORY;
+  // Unnamed rows are told apart by where they are: three new exercises would
+  // otherwise offer three buttons called "Delete exercise".
   const label = fromTaxonomy
     ? humanize(step.exercise ?? step.category)
-    : (step.exercise ?? 'exercise');
+    : (step.exercise ?? `exercise ${position(path)}`);
 
   return (
     <StepRow step={step} path={path} label={label}>
@@ -633,7 +663,7 @@ function ExerciseRow({ step, path }: { step: ExerciseStep; path: StepPath }) {
 
 function RestRow({ step, path }: { step: RestStep; path: StepPath }) {
   return (
-    <StepRow step={step} path={path} label="rest">
+    <StepRow step={step} path={path} label={`rest ${position(path)}`}>
       <span className="min-w-40 flex-1 text-sm font-medium text-gray-500">Rest</span>
       <DurationFields step={step} path={path} />
     </StepRow>
@@ -644,7 +674,7 @@ function RepeatRow({ step, path }: { step: RepeatBlock; path: StepPath }) {
   const { edit } = useEditor();
 
   return (
-    <StepRow step={step} path={path} label="repeat block">
+    <StepRow step={step} path={path} label={`repeat block ${position(path)}`}>
       <span className="text-sm font-semibold tracking-wide text-gray-700 uppercase">Repeat</span>
       <NumberField
         label="Rounds"

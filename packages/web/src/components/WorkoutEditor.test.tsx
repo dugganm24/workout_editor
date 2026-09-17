@@ -170,13 +170,13 @@ describe('WorkoutEditor', () => {
     // A rest that ends on a lap press has no number box to focus.
     await user.selectOptions(screen.getAllByLabelText('Duration type')[1]!, 'open');
 
-    await user.click(screen.getByRole('button', { name: 'Move rest up' }));
+    await user.click(screen.getByRole('button', { name: 'Move rest 2 up' }));
 
     expect(store().currentWorkout?.steps).toMatchObject([{ kind: 'rest' }, { kind: 'exercise' }]);
-    expect(screen.getByRole('button', { name: 'Move rest up' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Move rest 1 up' })).toHaveFocus();
 
     // And a copy of it, which has no number box either, still takes the cursor.
-    await user.click(screen.getByRole('button', { name: 'Duplicate rest' }));
+    await user.click(screen.getByRole('button', { name: 'Duplicate rest 1' }));
     expect(screen.getAllByLabelText('Duration type')[1]).toHaveFocus();
   });
 
@@ -354,7 +354,8 @@ describe('WorkoutEditor', () => {
     await user.click(screen.getByRole('button', { name: '+ Exercise' }));
 
     expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Delete exercise' })).toBeInTheDocument();
+    // Named by where it is, so a second unnamed row would not share the name.
+    expect(screen.getByRole('button', { name: 'Delete exercise 1' })).toBeInTheDocument();
   });
 
   it('after a delete that empties a block, puts the cursor on the next step, not inside it', async () => {
@@ -474,6 +475,51 @@ describe('WorkoutEditor', () => {
     render(<OpenWorkout />);
 
     expect(document.querySelectorAll('ol > :not(li)')).toHaveLength(0);
+  });
+
+  it('asks before a block delete takes its steps with it', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Repeat block' }));
+    await user.type(screen.getByLabelText('Exercise'), 'Squat');
+    await user.click(screen.getAllByRole('button', { name: '+ Rest' })[0]!);
+
+    // Nothing in this app can be undone, so the first click only arms it.
+    await user.click(screen.getByRole('button', { name: 'Delete repeat block 1' }));
+    expect(store().currentWorkout?.steps).toHaveLength(1);
+    const confirm = screen.getByRole('button', {
+      name: 'Confirm deleting repeat block 1 and its 2 steps',
+    });
+
+    // Away from the button, and it is no longer the click being made.
+    await user.click(screen.getByLabelText('Rounds'));
+    expect(screen.getByRole('button', { name: 'Delete repeat block 1' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Delete repeat block 1' }));
+    await user.click(confirm);
+    expect(store().currentWorkout?.steps).toEqual([]);
+  });
+
+  it('deletes a step that takes nothing with it in one click', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+
+    await user.click(screen.getByRole('button', { name: 'Delete exercise 1' }));
+
+    expect(store().currentWorkout?.steps).toEqual([]);
+  });
+
+  it('gives rows that have no name of their own a name each', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.keyboard('{Enter}');
+    await user.click(screen.getAllByRole('button', { name: '+ Rest' }).at(-1)!);
+
+    // Three unnamed rows, three distinct buttons to act on them.
+    expect(
+      screen
+        .getAllByRole('button', { name: /^Delete/ })
+        .map((button) => button.getAttribute('aria-label')),
+    ).toEqual(['Delete exercise 1', 'Delete exercise 2', 'Delete rest 3']);
   });
 
   it('duplicates and deletes a step from its own row', async () => {
@@ -631,7 +677,7 @@ describe('WorkoutEditor', () => {
       { kind: 'repeat', rounds: 5, steps: [{ exercise: 'Squat' }, { kind: 'rest' }] },
     ]);
 
-    await user.click(screen.getByRole('button', { name: 'Delete rest' }));
+    await user.click(screen.getByRole('button', { name: 'Delete rest 2' }));
     await user.click(screen.getByRole('button', { name: 'Delete Squat' }));
 
     // Emptied, the block goes with its last step rather than becoming unsavable.
