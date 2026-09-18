@@ -1,6 +1,6 @@
 import { SCHEMA_VERSION } from '@workout-editor/core';
 import WorkoutLibrary from './components/WorkoutLibrary.tsx';
-import WorkoutPreview from './components/WorkoutPreview.tsx';
+import WorkoutEditor from './components/WorkoutEditor.tsx';
 import { useWorkoutStore } from './store/workoutStore.ts';
 
 export default function App() {
@@ -36,7 +36,7 @@ export default function App() {
       )}
 
       <main className="flex-1">
-        {currentWorkout ? <WorkoutPreview workout={currentWorkout} /> : <WorkoutLibrary />}
+        {currentWorkout ? <WorkoutEditor workout={currentWorkout} /> : <WorkoutLibrary />}
       </main>
     </div>
   );

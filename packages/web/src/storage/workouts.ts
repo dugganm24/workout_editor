@@ -33,7 +33,7 @@ export interface Library {
   unreadable: UnreadableWorkout[];
 }
 
-function summarize(record: WorkoutRecord, workout: Workout): WorkoutSummary {
+export function summarize(record: WorkoutRecord, workout: Workout): WorkoutSummary {
   return {
     id: record.id,
     name: workout.name,
@@ -106,9 +106,26 @@ export async function readAllForBackup(): Promise<{
 
 /** Throws if the stored record is invalid — callers opening a workout need to know. */
 export async function getWorkout(id: string): Promise<Workout | undefined> {
+  return (await getStoredWorkout(id))?.workout;
+}
+
+/**
+ * Whether a record is there, without reading the workout inside it. Checking
+ * existence through `getWorkout` would validate the whole step tree, and would
+ * fail outright on a record this build cannot parse.
+ */
+export async function workoutExists(id: string): Promise<boolean> {
+  const db = await getDb();
+  return (await db.getKey(WORKOUT_STORE, id)) !== undefined;
+}
+
+/** `getWorkout` plus its write order, for callers checking that it is still the record they read. */
+export async function getStoredWorkout(
+  id: string,
+): Promise<{ workout: Workout; seq: number } | undefined> {
   const db = await getDb();
   const record = await db.get(WORKOUT_STORE, id);
-  return record ? migrateWorkout(record.workout) : undefined;
+  return record ? { workout: migrateWorkout(record.workout), seq: record.seq } : undefined;
 }
 
 /**
