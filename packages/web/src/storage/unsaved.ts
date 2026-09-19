@@ -118,14 +118,6 @@ export function returnUnsaved(copy: UnsavedCopy, raw: string): void {
   }
 }
 
-export function discardCopy(copy: UnsavedCopy): void {
-  try {
-    localStorage.removeItem(copy.key);
-  } catch {
-    // As above.
-  }
-}
-
 /** Every copy currently held, this tab's own included. */
 export function unsavedCopies(): UnsavedCopy[] {
   const copies: UnsavedCopy[] = [];
@@ -143,5 +135,5 @@ export function unsavedCopies(): UnsavedCopy[] {
 
 /** For tests: forgets every copy. */
 export function clearAllUnsaved(): void {
-  for (const copy of unsavedCopies()) discardCopy(copy);
+  for (const copy of unsavedCopies()) clearUnsaved(copy.id);
 }
