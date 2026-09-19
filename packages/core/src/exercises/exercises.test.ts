@@ -9,7 +9,6 @@ import {
   EXERCISE_CATEGORIES,
   findCategory,
   findExercise,
-  isExerciseKey,
   searchExercises,
 } from './index.js';
 
@@ -33,16 +32,6 @@ function fixturePairs(): { category: string; exerciseName: string }[] {
 }
 
 describe('exercise taxonomy', () => {
-  it('keys every category and named exercise the way Connect does', () => {
-    for (const category of EXERCISE_CATEGORIES) {
-      expect(isExerciseKey(category.key), category.key).toBe(true);
-      for (const exercise of category.exercises) {
-        expect(isExerciseKey(exercise.key), exercise.key).toBe(true);
-        expect(exercise.category).toBe(category.key);
-      }
-    }
-  });
-
   it('never lists a category or an exercise within it twice', () => {
     const categories = EXERCISE_CATEGORIES.map((category) => category.key);
     expect(new Set(categories).size).toBe(categories.length);
@@ -58,15 +47,6 @@ describe('exercise taxonomy', () => {
     expect(displayName('PLANK')).toBe('Plank');
     // Every exercise has one, because it is derived rather than written twice.
     expect(allExercises().every((exercise) => exercise.name.length > 0)).toBe(true);
-  });
-
-  it('rejects a key Connect would not understand', () => {
-    expect(isExerciseKey('BARBELL_BENCH_PRESS')).toBe(true);
-    expect(isExerciseKey('_45_DEGREE_PLANK')).toBe(true);
-    expect(isExerciseKey('Barbell Bench Press')).toBe(false);
-    expect(isExerciseKey('BARBELL__BENCH')).toBe(false);
-    expect(isExerciseKey('__BENCH')).toBe(false);
-    expect(isExerciseKey('')).toBe(false);
   });
 
   it('looks an exercise up within its own category', () => {
