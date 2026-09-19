@@ -73,7 +73,7 @@ Segment keys: `segmentOrder`, `sportType`, `poolLengthUnit`, `poolLength`,
 Keys in every group: `type` (`"RepeatGroupDTO"`), `stepId`, `stepOrder`, `stepType`,
 `childStepId`, `numberOfIterations`, `workoutSteps`, `endConditionValue`,
 `preferredEndConditionUnit` (always `null`), `endConditionCompare` (always `null`),
-`endCondition`, `skipLastRestStep` (always `false`), `smartRepeat` (always `false`).
+`endCondition`, `skipLastRestStep` (`false` or `null`), `smartRepeat` (always `false`).
 
 ```jsonc
 {
