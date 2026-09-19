@@ -8,8 +8,50 @@ const updatedAtFormat = new Intl.DateTimeFormat(undefined, {
   timeStyle: 'short',
 });
 
-function formatUpdatedAt(timestamp: number): string {
-  return updatedAtFormat.format(timestamp);
+/** Delete arms on first click and asks for a second; anything else disarms it. */
+function ConfirmDelete({
+  armed,
+  label,
+  onArm,
+  onCancel,
+  onConfirm,
+}: {
+  armed: boolean;
+  label?: string;
+  onArm: () => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (armed) {
+    return (
+      <>
+        <button
+          type="button"
+          className="rounded-md bg-red-600 px-2.5 py-1 text-white hover:bg-red-700"
+          onClick={onConfirm}
+        >
+          Confirm delete
+        </button>
+        <button
+          type="button"
+          className="rounded-md border border-gray-300 px-2.5 py-1 hover:bg-gray-50"
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+      </>
+    );
+  }
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      className="rounded-md border border-gray-300 px-2.5 py-1 text-red-700 hover:bg-red-50"
+      onClick={onArm}
+    >
+      Delete
+    </button>
+  );
 }
 
 export default function WorkoutLibrary() {
@@ -103,36 +145,18 @@ export default function WorkoutLibrary() {
                 <span className="min-w-0 break-words">
                   <code className="font-mono text-xs">{entry.id.slice(0, 8)}</code> — {entry.reason}
                 </span>
-                {pendingDelete === entry.id ? (
-                  <span className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="rounded-md bg-red-600 px-2.5 py-1 text-white hover:bg-red-700"
-                      onClick={() => {
-                        setPendingDelete(null);
-                        void deleteWorkout(entry.id);
-                      }}
-                    >
-                      Confirm delete
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-md border border-amber-300 px-2.5 py-1 hover:bg-amber-100"
-                      onClick={() => setPendingDelete(null)}
-                    >
-                      Cancel
-                    </button>
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    aria-label={`Delete unreadable record ${entry.id.slice(0, 8)}`}
-                    className="rounded-md border border-amber-300 px-2.5 py-1 text-red-700 hover:bg-amber-100"
-                    onClick={() => setPendingDelete(entry.id)}
-                  >
-                    Delete
-                  </button>
-                )}
+                <span className="flex items-center gap-2">
+                  <ConfirmDelete
+                    armed={pendingDelete === entry.id}
+                    label={`Delete unreadable record ${entry.id.slice(0, 8)}`}
+                    onArm={() => setPendingDelete(entry.id)}
+                    onCancel={() => setPendingDelete(null)}
+                    onConfirm={() => {
+                      setPendingDelete(null);
+                      void deleteWorkout(entry.id);
+                    }}
+                  />
+                </span>
               </li>
             ))}
           </ul>
@@ -207,7 +231,7 @@ export default function WorkoutLibrary() {
                 )}
                 <p className="text-sm text-gray-500">
                   {summary.stepCount} step{summary.stepCount === 1 ? '' : 's'} · updated{' '}
-                  {formatUpdatedAt(summary.updatedAt)}
+                  {updatedAtFormat.format(summary.updatedAt)}
                 </p>
               </div>
 
@@ -233,35 +257,15 @@ export default function WorkoutLibrary() {
                 >
                   Export backup
                 </button>
-                {pendingDelete === summary.id ? (
-                  <>
-                    <button
-                      type="button"
-                      className="rounded-md bg-red-600 px-2.5 py-1 text-white hover:bg-red-700"
-                      onClick={() => {
-                        setPendingDelete(null);
-                        void deleteWorkout(summary.id);
-                      }}
-                    >
-                      Confirm delete
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-md border border-gray-300 px-2.5 py-1 hover:bg-gray-50"
-                      onClick={() => setPendingDelete(null)}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    className="rounded-md border border-gray-300 px-2.5 py-1 text-red-700 hover:bg-red-50"
-                    onClick={() => setPendingDelete(summary.id)}
-                  >
-                    Delete
-                  </button>
-                )}
+                <ConfirmDelete
+                  armed={pendingDelete === summary.id}
+                  onArm={() => setPendingDelete(summary.id)}
+                  onCancel={() => setPendingDelete(null)}
+                  onConfirm={() => {
+                    setPendingDelete(null);
+                    void deleteWorkout(summary.id);
+                  }}
+                />
               </div>
             </li>
           ))}

@@ -7,7 +7,6 @@ import { migrateWorkout, UnsupportedSchemaVersionError } from '../storage/migrat
 import {
   claimUnsaved,
   clearUnsaved,
-  discardCopy,
   returnUnsaved,
   stashUnsaved,
   unsavedCopies,
@@ -290,7 +289,7 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
     } catch (error) {
       // A copy written by a newer build is valid, just not here: a build that
       // understands it can still write it. Anything else never will be.
-      if (!(error instanceof UnsupportedSchemaVersionError)) discardCopy(copy);
+      if (!(error instanceof UnsupportedSchemaVersionError)) clearUnsaved(copy.id);
       return failed(error);
     }
 
@@ -298,11 +297,11 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
     // Deleted since; or written since, which this copy did not start from, so
     // writing it would undo that.
     if (!stored) {
-      discardCopy(copy);
+      clearUnsaved(copy.id);
       return undefined;
     }
     if (stored.seq !== copy.baseSeq) {
-      discardCopy(copy);
+      clearUnsaved(copy.id);
       return 'Unsaved changes from a closed tab were dropped: that workout has been saved since.';
     }
 

@@ -1,4 +1,5 @@
-import { resetDb } from './storage/testing.ts';
+import { IDBFactory } from 'fake-indexeddb';
+import { closeDb } from './storage/db.ts';
 import { clearAllUnsaved } from './storage/unsaved.ts';
 import { useWorkoutStore } from './store/workoutStore.ts';
 
@@ -23,7 +24,8 @@ export async function resetApp(): Promise<void> {
   await useWorkoutStore.getState().flushSteps();
   useWorkoutStore.getState().discardChanges();
   await useWorkoutStore.getState().loadLibrary();
-  await resetDb();
+  await closeDb();
+  globalThis.indexedDB = new IDBFactory();
   clearAllUnsaved();
   useWorkoutStore.setState({
     summaries: [],

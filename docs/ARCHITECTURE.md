@@ -34,11 +34,8 @@ Workout Editor ──export──▶ Garmin Connect workout JSON
 packages/
   core/        # @workout-editor/core
     src/model/     # canonical Workout/Step/Target types (Zod schemas = validation + TS types)
-    src/sports/    # sport plugin definitions
-    src/connect/   # canonical model ⇄ Garmin Connect workout JSON
-    src/exercises/ # exercise taxonomy
   web/         # React app (builder UI, workout library, export/import flow)
-docs/          # this file, adding-a-sport.md, connect-format.md
+docs/          # this file, connect-format.md, deploying.md
 ```
 
 ## Design rules
