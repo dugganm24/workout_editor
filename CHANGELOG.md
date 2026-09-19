@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/dugganm24/workout_editor/compare/v1.1.0...v1.2.0) (2026-09-19)
+
+
+### Features
+
+* **core:** exercise taxonomy with lookup, search and display names ([#14](https://github.com/dugganm24/workout_editor/issues/14)) ([e6c2ec8](https://github.com/dugganm24/workout_editor/commit/e6c2ec82943b9d00e4fe1577db86678e22001d8d))
+
 ## [1.1.0](https://github.com/dugganm24/workout_editor/compare/v1.0.0...v1.1.0) (2026-09-18)
 
 
