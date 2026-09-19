@@ -25,28 +25,15 @@ This is an undocumented internal format. The extension behaviour below is from i
 
 ## Structure from golden fixtures
 
-Four strength GET payloads, all `sportType.sportTypeKey: "strength_training"`
+Three strength GET payloads, all `sportType.sportTypeKey: "strength_training"`
 (`sportTypeId` 5, `displayOrder` 4). Each has one segment (`segmentOrder` 1) whose
 `workoutSteps` are a flat sequence of `RepeatGroupDTO`s; exercises and rests live
 inside those groups. No nested repeats in these files.
 
-Top-level keys present on every export (account fields stripped from fixtures; see
-below): `workoutId`, `workoutName`, `description`, `updatedDate`, `createdDate`,
-`sportType`, `subSportType`, `trainingPlanId`, `sharedWithUsers`,
-`estimatedDurationInSecs`, `estimatedDistanceInMeters`, `workoutSegments`,
-`poolLength`, `poolLengthUnit`, `locale`, `workoutProvider`, `workoutSourceId`,
-`uploadTimestamp`, `atpPlanId`, `consumer`, `consumerName`, `consumerImageURL`,
-`consumerWebsiteURL`, `workoutNameI18nKey`, `descriptionI18nKey`,
-`avgTrainingSpeed`, `estimateType`, `estimatedDistanceUnit`, `workoutThumbnailUrl`,
-`isSessionTransitionEnabled`, `shared`.
-
-Most of those are `null` / `0` / `false` on these strength workouts. Dates look like
-`"2026-09-08T09:23:09.0"`. `estimatedDistanceUnit` at the top level is
-`{"unitId":null,"unitKey":null,"factor":null}`.
-
-Segment keys: `segmentOrder`, `sportType`, `poolLengthUnit`, `poolLength`,
-`avgTrainingSpeed`, `estimatedDurationInSecs`, `estimatedDistanceInMeters`,
-`estimatedDistanceUnit`, `estimateType`, `description`, `workoutSteps`.
+The fixtures are the key inventory — 31 top-level keys, most `null` / `0` /
+`false`. Only `workoutName`, `sportType`, and `workoutSegments` carry anything we
+need. Dates look like `"2026-09-08T09:23:09.0"`, and the top-level
+`estimatedDistanceUnit` is `{"unitId":null,"unitKey":null,"factor":null}`.
 
 ```jsonc
 {
@@ -70,11 +57,6 @@ Segment keys: `segmentOrder`, `sportType`, `poolLengthUnit`, `poolLength`,
 
 ### `RepeatGroupDTO`
 
-Keys in every group: `type` (`"RepeatGroupDTO"`), `stepId`, `stepOrder`, `stepType`,
-`childStepId`, `numberOfIterations`, `workoutSteps`, `endConditionValue`,
-`preferredEndConditionUnit` (always `null`), `endConditionCompare` (always `null`),
-`endCondition`, `skipLastRestStep` (`false` or `null`), `smartRepeat` (always `false`).
-
 ```jsonc
 {
   "type": "RepeatGroupDTO",
@@ -96,19 +78,16 @@ Keys in every group: `type` (`"RepeatGroupDTO"`), `stepId`, `stepOrder`, `stepTy
 }
 ```
 
+Plus `preferredEndConditionUnit` and `endConditionCompare`, always `null`.
 `numberOfIterations` and `endConditionValue` match. Children are only
 `ExecutableStepDTO` here (exercise + rest pairs, or a single timed exercise + rest).
 
 ### `ExecutableStepDTO`
 
-Keys in every step: `type` (`"ExecutableStepDTO"`), `stepId`, `stepOrder`, `stepType`,
-`childStepId`, `description`, `endCondition`, `endConditionValue`,
-`preferredEndConditionUnit` (always `null`), `endConditionCompare`, `targetType`,
-`targetValueOne`, `targetValueTwo`, `targetValueUnit`, `zoneNumber`,
-`secondaryTargetType`, `secondaryTargetValueOne`, `secondaryTargetValueTwo`,
-`secondaryTargetValueUnit`, `secondaryZoneNumber`, `endConditionZone`, `strokeType`,
-`equipmentType`, `category`, `exerciseName`, `workoutProvider`,
-`providerExerciseSourceId`, `weightValue`, `weightUnit`.
+30 keys (see any fixture). The ones that carry strength data: `stepType`,
+`endCondition`, `endConditionValue`, `category`, `exerciseName`, `description`,
+`weightValue`, `weightUnit`, plus `stepOrder` / `childStepId` for position. The
+rest are swim/cardio leftovers.
 
 `strokeType` / `equipmentType` are always the unused placeholders
 `{strokeTypeId:0,strokeTypeKey:null,displayOrder:0}` and
@@ -168,7 +147,6 @@ child executable step repeats that same `childStepId`.
 | -------------------------- | ------------- | ---------------------------------------------------------------------------------------------------- |
 | `strength-day1-upper.json` | Day 1 - Upper | 4 repeat supersets, rep+weight, open rests, 8 categories; empty `exerciseName` on `SHOULDER_PRESS`   |
 | `strength-day2-lower.json` | Day 2 - Lower | same shape; one timed exercise (side plank 40s); `weightValue: 0` on box jump                        |
-| `strength-day3-upper.json` | Day 3 - Upper | same shape as Day 1; more upper-body categories                                                      |
 | `strength-day4-lower.json` | Day 4 - Lower | timed sprint + plank; first group is one exercise + rest; `weightUnit` null on some unweighted steps |
 
 These are Connect's own minified GET bodies. Prettier is ignored for
