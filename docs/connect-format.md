@@ -3,8 +3,9 @@
 Our export target is the JSON consumed by the
 [Share your Garmin Connect workout](https://github.com/fulippo/share-your-garmin-workout)
 Chrome extension, which is **Garmin Connect's internal workout-service payload, verbatim**.
-This is an undocumented internal format, everything below is derived from the extension
-source (read 2026-07-19) and must be confirmed against golden fixtures (see below).
+This is an undocumented internal format. The extension behaviour below is from its source
+(read 2026-07-19); the schema is from golden fixtures in
+`packages/core/test/fixtures/connect/`.
 
 ## What the extension actually does
 
@@ -22,57 +23,179 @@ source (read 2026-07-19) and must be confirmed against golden fixtures (see belo
   - On success the response contains the new `workoutId` and `sportType.sportTypeKey`
     (used to redirect to `https://connect.garmin.com/app/workout/{workoutId}`).
 
-## Structure observed so far
+## Structure from golden fixtures
 
-Top level (fields the extension relies on):
+Four strength GET payloads, all `sportType.sportTypeKey: "strength_training"`
+(`sportTypeId` 5, `displayOrder` 4). Each has one segment (`segmentOrder` 1) whose
+`workoutSteps` are a flat sequence of `RepeatGroupDTO`s; exercises and rests live
+inside those groups. No nested repeats in these files.
+
+Top-level keys present on every export (account fields stripped from fixtures; see
+below): `workoutId`, `workoutName`, `description`, `updatedDate`, `createdDate`,
+`sportType`, `subSportType`, `trainingPlanId`, `sharedWithUsers`,
+`estimatedDurationInSecs`, `estimatedDistanceInMeters`, `workoutSegments`,
+`poolLength`, `poolLengthUnit`, `locale`, `workoutProvider`, `workoutSourceId`,
+`uploadTimestamp`, `atpPlanId`, `consumer`, `consumerName`, `consumerImageURL`,
+`consumerWebsiteURL`, `workoutNameI18nKey`, `descriptionI18nKey`,
+`avgTrainingSpeed`, `estimateType`, `estimatedDistanceUnit`, `workoutThumbnailUrl`,
+`isSessionTransitionEnabled`, `shared`.
+
+Most of those are `null` / `0` / `false` on these strength workouts. Dates look like
+`"2026-09-08T09:23:09.0"`. `estimatedDistanceUnit` at the top level is
+`{"unitId":null,"unitKey":null,"factor":null}`.
+
+Segment keys: `segmentOrder`, `sportType`, `poolLengthUnit`, `poolLength`,
+`avgTrainingSpeed`, `estimatedDurationInSecs`, `estimatedDistanceInMeters`,
+`estimatedDistanceUnit`, `estimateType`, `description`, `workoutSteps`.
 
 ```jsonc
 {
-  "workoutName": "Push Day",
-  "sportType": { "sportTypeId": ..., "sportTypeKey": "strength_training" },
+  "workoutName": "Day 1 - Upper",
+  "sportType": {
+    "sportTypeId": 5,
+    "sportTypeKey": "strength_training",
+    "displayOrder": 4,
+  },
   "workoutSegments": [
     {
       "segmentOrder": 1,
-      "sportType": { ... },
+      "sportType": { "sportTypeId": 5, "sportTypeKey": "strength_training", "displayOrder": 4 },
       "workoutSteps": [
-        // ExecutableStepDTO (exercise/rest steps) and RepeatGroupDTO (repeat blocks),
-        // each with stepId (null on import), stepOrder, stepType, endCondition,
-        // endConditionValue, and for strength: exerciseCategory / exerciseName /
-        // weight fields. Exact field set to be pinned down from fixtures.
-      ]
-    }
-  ]
+        // RepeatGroupDTO and ExecutableStepDTO, as below
+      ],
+    },
+  ],
 }
 ```
 
-The exact step-level schema (strength categories/exercise keys, weight units, rep vs time
-end conditions, repeat-group nesting) **must be documented from real fixtures, not guessed**.
+### `RepeatGroupDTO`
 
-## Golden fixtures — how to produce them
+Keys in every group: `type` (`"RepeatGroupDTO"`), `stepId`, `stepOrder`, `stepType`,
+`childStepId`, `numberOfIterations`, `workoutSteps`, `endConditionValue`,
+`preferredEndConditionUnit` (always `null`), `endConditionCompare` (always `null`),
+`endCondition`, `skipLastRestStep` (always `false`), `smartRepeat` (always `false`).
 
-Fixtures live in `packages/core/test/fixtures/connect/` and are the source of truth for the
-converter and its tests. To produce one:
+```jsonc
+{
+  "type": "RepeatGroupDTO",
+  "stepId": 14552872232,
+  "stepOrder": 1,
+  "stepType": { "stepTypeId": 6, "stepTypeKey": "repeat", "displayOrder": 6 },
+  "childStepId": 1,
+  "numberOfIterations": 4,
+  "endConditionValue": 4.0,
+  "endCondition": {
+    "conditionTypeId": 7,
+    "conditionTypeKey": "iterations",
+    "displayOrder": 7,
+    "displayable": false,
+  },
+  "skipLastRestStep": false,
+  "smartRepeat": false,
+  "workoutSteps": [/* ExecutableStepDTO children */],
+}
+```
 
-1. In Garmin Connect, build (or pick) a strength workout **that you have verified runs
-   correctly on a real watch**.
-2. Open the workout page and click the extension's **Download** button.
-3. Drop the file into the fixtures directory with a descriptive name, e.g.
-   `strength-5x5-with-rests.json`.
-4. Sanitize: remove/zero `ownerId`, `author`, and any other account-identifying fields
+`numberOfIterations` and `endConditionValue` match. Children are only
+`ExecutableStepDTO` here (exercise + rest pairs, or a single timed exercise + rest).
 
-Good fixture coverage to aim for:
+### `ExecutableStepDTO`
 
-- single exercise, rep-based sets with weight
-- time-based sets and "until lap press" (open) sets
-- rest steps between sets, fixed-time and open
-- repeat groups (e.g. 3 rounds of squat + rest), including nesting if Connect supports it
-- a many-step workout near/above 50 steps (probes whether Connect's limit is server-enforced)
-- a workout with multiple different exercise categories
+Keys in every step: `type` (`"ExecutableStepDTO"`), `stepId`, `stepOrder`, `stepType`,
+`childStepId`, `description`, `endCondition`, `endConditionValue`,
+`preferredEndConditionUnit` (always `null`), `endConditionCompare`, `targetType`,
+`targetValueOne`, `targetValueTwo`, `targetValueUnit`, `zoneNumber`,
+`secondaryTargetType`, `secondaryTargetValueOne`, `secondaryTargetValueTwo`,
+`secondaryTargetValueUnit`, `secondaryZoneNumber`, `endConditionZone`, `strokeType`,
+`equipmentType`, `category`, `exerciseName`, `workoutProvider`,
+`providerExerciseSourceId`, `weightValue`, `weightUnit`.
+
+`strokeType` / `equipmentType` are always the unused placeholders
+`{strokeTypeId:0,strokeTypeKey:null,displayOrder:0}` and
+`{equipmentTypeId:0,equipmentTypeKey:null,displayOrder:0}`. Secondary target fields
+and `endConditionZone` are always `null`. `targetType` is either `null` or
+`{workoutTargetTypeId:1,workoutTargetTypeKey:"no.target",displayOrder:1}` — no
+strength step in these files uses a pace/HR/power target.
+
+`stepType`:
+
+| stepTypeKey | stepTypeId | displayOrder | used for              |
+| ----------- | ---------- | ------------ | --------------------- |
+| `interval`  | 3          | 3            | exercise              |
+| `rest`      | 5          | 5            | rest                  |
+| `repeat`    | 6          | 6            | `RepeatGroupDTO` only |
+
+End conditions seen:
+
+| conditionTypeKey | conditionTypeId | displayable | `endConditionValue`                     |
+| ---------------- | --------------- | ----------- | --------------------------------------- |
+| `reps`           | 10              | true        | rep count (e.g. `6.0`)                  |
+| `time`           | 2               | true        | seconds (e.g. `15.0`, `25.0`, `40.0`)   |
+| `lap.button`     | 1               | true        | `0.0` (open / until lap press)          |
+| `iterations`     | 7               | false       | repeat rounds; only on `RepeatGroupDTO` |
+
+`endConditionCompare` on executable steps is `""`, `"gt"`, or `null` — not a
+stable discriminator. All rests in these fixtures are `lap.button` (open); none
+are fixed-time. Time-based **exercises** appear on Day 2 (side plank 40s) and
+Day 4 (sprint 15s, side plank 25s). There are no open (`lap.button`) **exercise**
+steps.
+
+Exercise identity is `category` + `exerciseName`, **not** `exerciseCategory`.
+`exerciseName` can be `""` when Connect has a category but no named exercise
+(`SHOULDER_PRESS` landmine / machine, `CALF_RAISE`). Rest steps have
+`category` and `exerciseName` both `null`. `description` is a free-text note
+(`"Pendlay"`, `"Landmine"`, …) or `""` / `null`.
+
+### Weight
+
+`weightUnit` when present is always `{"unitId":9,"unitKey":"pound","factor":453.59237}`.
+`weightValue` is a float in that unit (whole pounds come through as values like
+`69.99676824369863`). Rests typically still carry `weightUnit` with
+`weightValue: null`. Some unweighted steps omit it (`weightUnit: null`): Day 4
+sprint, side plank, chop, calf raise.
+
+### `stepOrder` and `childStepId`
+
+`stepOrder` is **global** across the segment: 1…n in tree order, including
+repeat wrappers. It does not restart inside a group.
+
+`childStepId` on a `RepeatGroupDTO` is the group number (1, 2, 3, …). Every
+child executable step repeats that same `childStepId`.
+
+## Golden fixtures
+
+| File                       | Workout       | What it covers                                                                                       |
+| -------------------------- | ------------- | ---------------------------------------------------------------------------------------------------- |
+| `strength-day1-upper.json` | Day 1 - Upper | 4 repeat supersets, rep+weight, open rests, 8 categories; empty `exerciseName` on `SHOULDER_PRESS`   |
+| `strength-day2-lower.json` | Day 2 - Lower | same shape; one timed exercise (side plank 40s); `weightValue: 0` on box jump                        |
+| `strength-day3-upper.json` | Day 3 - Upper | same shape as Day 1; more upper-body categories                                                      |
+| `strength-day4-lower.json` | Day 4 - Lower | timed sprint + plank; first group is one exercise + rest; `weightUnit` null on some unweighted steps |
+
+These are Connect's own minified GET bodies. Prettier is ignored for
+`packages/core/test/fixtures/` so format-check does not rewrite them.
+
+To add another:
+
+1. In Garmin Connect, pick a strength workout **verified on a real watch**.
+2. Download via the extension.
+3. Name it for what it proves, e.g. `strength-5x5-weighted.json`.
+4. **Remove** (do not zero) `ownerId`, `author`, and any other
+   account-identifying fields. Leave `workoutId`, dates, and estimates —
+   those are format evidence.
+5. Confirm `grep -riE 'ownerId|author|displayName|fullName|profileImage|email' packages/core/test/fixtures/connect/` prints nothing.
+
+Still missing vs the original coverage list: nested `RepeatGroupDTO`, a
+fixed-time rest, an open (lap-press) exercise step, a ~50-step workout.
 
 ## Open questions
 
-- Full `ExecutableStepDTO`/`RepeatGroupDTO` field inventory for `strength_training`.
-- Weight units in the payload.
-- Whether the 50-step editor limit is enforced by the POST endpoint.
-- Whether `stepOrder` must be globally sequential or per-group.
-- Minimum viable payload: which fields can be omitted on POST.
+- **Field inventory for strength** — recorded above from these GET payloads.
+- **Weight units** — pounds (`unitKey: "pound"`, `unitId` 9, `factor` 453.59237).
+- **50-step editor limit** — not tested; no fixture that size. (#2 comment: not
+  planned.)
+- **`stepOrder`** — globally sequential in these exports, not per-group.
+- **Minimum viable POST payload** — still unknown. These files are GET
+  responses. The extension POSTs essentially the full GET body (and Connect
+  accepts leftover owner fields), but that does not tell us which keys POST
+  actually requires. Our exports should omit `workoutId` / `ownerId` / `author`
+  / dates / estimates anyway.
