@@ -4,3 +4,4 @@ coverage/
 package-lock.json
 CHANGELOG.md
 packages/core/test/fixtures/
+packages/core/src/exercises/connect-exercises.json
