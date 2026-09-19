@@ -2,7 +2,6 @@ import {
   SCHEMA_VERSION,
   WorkoutSchema,
   type ExerciseStep,
-  type RestStep,
   type Workout,
   type WorkoutStep,
 } from '../model/workout.js';
@@ -75,8 +74,48 @@ export function fromConnect(json: unknown): Workout {
 export function toConnect(workout: Workout) {
   const parsed = WorkoutSchema.parse(workout);
   if (parsed.steps.length === 0) throw new ConnectError('workout has no steps');
-  const order = { n: 0 };
-  const groups = { n: 0 };
+  let order = 0;
+  let groups = 0;
+
+  function emitStep(step: WorkoutStep, childStepId: number): object {
+    const stepOrder = ++order;
+    if (step.kind === 'repeat') {
+      const id = ++groups;
+      return {
+        type: 'RepeatGroupDTO',
+        stepId: null,
+        stepOrder,
+        stepType: STEP_TYPE.repeat,
+        childStepId: id,
+        numberOfIterations: step.rounds,
+        endConditionValue: step.rounds,
+        endCondition: END.iterations,
+        skipLastRestStep: false,
+        smartRepeat: false,
+        workoutSteps: step.steps.map((child) => emitStep(child, id)),
+      };
+    }
+    const { duration } = step;
+    const weight =
+      step.kind === 'exercise' && step.target
+        ? { weightValue: (step.target.kg * 1000) / GRAMS_PER_POUND, weightUnit: POUND }
+        : { weightValue: null, weightUnit: null };
+    return {
+      type: 'ExecutableStepDTO',
+      stepId: null,
+      stepOrder,
+      stepType: STEP_TYPE[step.kind === 'rest' ? 'rest' : 'interval'],
+      childStepId,
+      description: step.kind === 'exercise' ? (step.notes ?? null) : null,
+      endCondition: END[duration.type === 'open' ? 'lap.button' : duration.type],
+      endConditionValue:
+        duration.type === 'time' ? duration.seconds : duration.type === 'reps' ? duration.reps : 0,
+      category: step.kind === 'exercise' ? step.category : null,
+      exerciseName: step.kind === 'exercise' ? (step.exercise ?? '') : null,
+      ...weight,
+    };
+  }
+
   return {
     workoutName: parsed.name,
     sportType: SPORT,
@@ -84,7 +123,7 @@ export function toConnect(workout: Workout) {
       {
         segmentOrder: 1,
         sportType: SPORT,
-        workoutSteps: parsed.steps.map((step) => emitStep(step, 1, order, groups)),
+        workoutSteps: parsed.steps.map((step) => emitStep(step, 1)),
       },
     ],
   };
@@ -93,7 +132,7 @@ export function toConnect(workout: Workout) {
 function parseStep(raw: unknown): WorkoutStep {
   const step = rec(raw, 'step');
   if (step.type === 'RepeatGroupDTO') {
-    const rounds = intPositive(step.numberOfIterations, 'repeat rounds');
+    const rounds = positive(step.numberOfIterations, 'repeat rounds', true);
     const children = arr(step.workoutSteps, 'repeat steps').map(parseStep);
     if (children.length === 0) throw new ConnectError('repeat block is empty');
     return { kind: 'repeat', rounds, steps: children };
@@ -102,9 +141,13 @@ function parseStep(raw: unknown): WorkoutStep {
     throw new ConnectError(`unsupported step: ${String(step.type)}`);
   }
   const stepType = rec(step.stepType, 'stepType').stepTypeKey;
-  const endKey = rec(step.endCondition, 'endCondition').conditionTypeKey;
+  const duration = parseDuration(
+    rec(step.endCondition, 'endCondition').conditionTypeKey,
+    step.endConditionValue,
+  );
   if (stepType === 'rest') {
-    return { kind: 'rest', duration: restDuration(endKey, step.endConditionValue) };
+    if (duration.type === 'reps') throw new ConnectError('rest cannot end on reps');
+    return { kind: 'rest', duration };
   }
   if (stepType !== 'interval') {
     throw new ConnectError(`unsupported step type: ${String(stepType)}`);
@@ -126,86 +169,24 @@ function parseStep(raw: unknown): WorkoutStep {
     kind: 'exercise',
     category,
     ...(exercise ? { exercise } : {}),
-    duration: exerciseDuration(endKey, step.endConditionValue),
+    duration,
     ...(target ? { target } : {}),
     ...(notes ? { notes } : {}),
   };
 }
 
-function restDuration(endKey: unknown, value: unknown): RestStep['duration'] {
+function parseDuration(endKey: unknown, value: unknown): ExerciseStep['duration'] {
   if (endKey === 'lap.button') return { type: 'open' };
-  if (endKey === 'time') return { type: 'time', seconds: positive(value, 'rest seconds') };
-  throw new ConnectError(`unsupported rest end condition: ${String(endKey)}`);
+  if (endKey === 'time') return { type: 'time', seconds: positive(value, 'seconds') };
+  if (endKey === 'reps') return { type: 'reps', reps: positive(value, 'reps', true) };
+  throw new ConnectError(`unsupported end condition: ${String(endKey)}`);
 }
 
-function exerciseDuration(endKey: unknown, value: unknown): ExerciseStep['duration'] {
-  if (endKey === 'lap.button') return { type: 'open' };
-  if (endKey === 'time') return { type: 'time', seconds: positive(value, 'exercise seconds') };
-  if (endKey === 'reps') return { type: 'reps', reps: intPositive(value, 'reps') };
-  throw new ConnectError(`unsupported exercise end condition: ${String(endKey)}`);
-}
-
-function parseWeight(value: unknown, unit: unknown): { type: 'weight'; kg: number } | undefined {
+function parseWeight(value: unknown, unit: unknown): ExerciseStep['target'] {
   if (typeof value !== 'number' || !(value > 0)) return undefined;
-  const fields =
-    unit && typeof unit === 'object' && !Array.isArray(unit) ? rec(unit, 'weightUnit') : null;
-  const factor =
-    typeof fields?.factor === 'number' && fields.factor > 0 ? fields.factor : GRAMS_PER_POUND;
-  const kg = (value * factor) / 1000;
-  return kg > 0 ? { type: 'weight', kg } : undefined;
-}
-
-function durationValue(duration: ExerciseStep['duration'] | RestStep['duration']): number {
-  switch (duration.type) {
-    case 'open':
-      return 0;
-    case 'time':
-      return duration.seconds;
-    case 'reps':
-      return duration.reps;
-  }
-}
-
-function emitStep(
-  step: WorkoutStep,
-  childStepId: number,
-  order: { n: number },
-  groups: { n: number },
-): object {
-  const stepOrder = ++order.n;
-  if (step.kind === 'repeat') {
-    const id = ++groups.n;
-    return {
-      type: 'RepeatGroupDTO',
-      stepId: null,
-      stepOrder,
-      stepType: STEP_TYPE.repeat,
-      childStepId: id,
-      numberOfIterations: step.rounds,
-      endConditionValue: step.rounds,
-      endCondition: END.iterations,
-      skipLastRestStep: false,
-      smartRepeat: false,
-      workoutSteps: step.steps.map((child) => emitStep(child, id, order, groups)),
-    };
-  }
-  const weight =
-    step.kind === 'exercise' && step.target
-      ? { weightValue: (step.target.kg * 1000) / GRAMS_PER_POUND, weightUnit: POUND }
-      : { weightValue: null, weightUnit: null };
-  return {
-    type: 'ExecutableStepDTO',
-    stepId: null,
-    stepOrder,
-    stepType: STEP_TYPE[step.kind === 'rest' ? 'rest' : 'interval'],
-    childStepId,
-    description: step.kind === 'exercise' ? (step.notes ?? null) : null,
-    endCondition: END[step.duration.type === 'open' ? 'lap.button' : step.duration.type],
-    endConditionValue: durationValue(step.duration),
-    category: step.kind === 'exercise' ? step.category : null,
-    exerciseName: step.kind === 'exercise' ? (step.exercise ?? '') : null,
-    ...weight,
-  };
+  const factor = (unit as { factor?: unknown } | null)?.factor;
+  const grams = typeof factor === 'number' && factor > 0 ? factor : GRAMS_PER_POUND;
+  return { type: 'weight', kg: (value * grams) / 1000 };
 }
 
 function rec(value: unknown, label: string): Record<string, unknown> {
@@ -220,15 +201,10 @@ function arr(value: unknown, label: string): unknown[] {
   return value;
 }
 
-function intPositive(value: unknown, label: string): number {
+function positive(value: unknown, label: string, int = false): number {
   const n = Number(value);
-  if (!Number.isInteger(n) || n < 1)
-    throw new ConnectError(`${label}: expected a positive integer`);
-  return n;
-}
-
-function positive(value: unknown, label: string): number {
-  const n = Number(value);
-  if (!(n > 0)) throw new ConnectError(`${label}: expected a positive number`);
+  if (!(n > 0) || (int && !Number.isInteger(n))) {
+    throw new ConnectError(`${label}: expected a positive ${int ? 'integer' : 'number'}`);
+  }
   return n;
 }
