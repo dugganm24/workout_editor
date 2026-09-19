@@ -62,9 +62,10 @@ describe('exercise taxonomy', () => {
 
   it('rejects a key Connect would not understand', () => {
     expect(isExerciseKey('BARBELL_BENCH_PRESS')).toBe(true);
+    expect(isExerciseKey('_45_DEGREE_PLANK')).toBe(true);
     expect(isExerciseKey('Barbell Bench Press')).toBe(false);
     expect(isExerciseKey('BARBELL__BENCH')).toBe(false);
-    expect(isExerciseKey('_BENCH')).toBe(false);
+    expect(isExerciseKey('__BENCH')).toBe(false);
     expect(isExerciseKey('')).toBe(false);
   });
 
@@ -101,17 +102,23 @@ describe('exercise taxonomy', () => {
       expect(keys('bench dumbbell')).toContain('INCLINE_DUMBBELL_BENCH_PRESS');
       expect(keys('dumbbell bench')).toContain('INCLINE_DUMBBELL_BENCH_PRESS');
       // "row" is FACE_PULL's category, not part of its name.
-      expect(keys('face pull row')).toEqual(['FACE_PULL']);
+      expect(keys('face pull row')).toContain('FACE_PULL');
     });
 
     it('puts what starts with the word first', () => {
-      const [first] = keys('press');
-      expect(first).toBe('INCLINE_DUMBBELL_BENCH_PRESS');
-      expect(keys('curl')[0]).toBe('BARBELL_BICEPS_CURL');
+      const ranked = searchExercises('press', allExercises().length);
+      const leading = (exercise: { name: string; category: string }) =>
+        `${exercise.name} ${exercise.category}`
+          .toLowerCase()
+          .split(/[\s_]+/)
+          .some((part) => part.startsWith('press'));
+      expect(leading(ranked[0]!)).toBe(true);
+      const scores = ranked.map((exercise) => Number(leading(exercise)));
+      expect(scores).toEqual([...scores].sort((a, b) => b - a));
     });
 
     it('finds nothing rather than everything for a word no exercise has', () => {
-      expect(keys('kettlebell swing')).toEqual([]);
+      expect(keys('xyzzyfnord')).toEqual([]);
     });
 
     it('offers the whole catalog for an empty query, up to the limit', () => {

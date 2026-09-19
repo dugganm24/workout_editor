@@ -7,24 +7,33 @@ Connect understands, keyed exactly as its workout JSON expects them
 
 ## Where the keys come from
 
-`catalog.ts` is grown from the golden fixtures in
-`packages/core/test/fixtures/connect/`. Connect's workout JSON names a step with
-`category` + `exerciseName` (not `exerciseCategory`); those strings go into the
-catalog as-is. `exercises.test.ts` walks the fixtures and requires every pair
-to resolve.
+`connect-exercises.json` is Connect's public exercise library, slimmed to
+category → exerciseName keys:
+
+https://connect.garmin.com/web-data/exercises/Exercises.json
+
+Regenerate with `npm run generate-catalog -w @workout-editor/core`. Display
+names are derived from the keys (`displayName`), so there is nothing else to
+keep in step.
 
 Connect sometimes emits a category with `exerciseName: ""` (a landmine under
-`SHOULDER_PRESS`, a calf raise with no variant). Those categories sit in the
-catalog with an empty exercise list.
+`SHOULDER_PRESS`, a calf raise with no variant). Those still resolve via
+`findCategory`; they are not a separate catalog row.
+
+## Golden fixtures are still required
+
+The catalog is the picker list. The golden fixtures in
+`packages/core/test/fixtures/connect/` are real Connect _workout_ payloads —
+the format spec for import/export (`docs/connect-format.md`).
+`exercises.test.ts` walks them and requires every `category` / `exerciseName`
+to resolve, so a catalog refresh cannot drop a key Connect has actually
+written. They are not a substitute for each other.
 
 ## Why not Garmin's FIT SDK
 
 [Issue #3](https://github.com/dugganm24/workout_editor/issues/3) proposed
-generating the taxonomy from the FIT SDK's profile enums, which carry 53
-categories and ~1,850 exercise names — far more than this catalog.
-
-The SDK's licence (`LICENSE.txt` in `@garmin/fitsdk`) makes that a poor fit for
-this repo:
+generating the taxonomy from the FIT SDK's profile enums. The SDK's licence
+(`LICENSE.txt` in `@garmin/fitsdk`) makes that a poor fit for this repo:
 
 - §1 grants use "for Licensee's internal business purposes".
 - §2(c) forbids making the Licensed Technology, "or any features or
@@ -34,23 +43,6 @@ this repo:
   source code form, or that others have the right to modify it" — which is what
   committing generated enums into this MIT repo would do.
 
-Generating at build time rather than committing does not clearly help: the
-values still end up published in the deployed bundle.
-
-**This is a reading of the licence, not legal advice.** If the full taxonomy
-matters, the options are roughly:
-
-1. **Grow the catalog from fixtures.** Every key seen in a real export is a key
-   Connect accepts, and comes from the user's own data. Coverage grows with the
-   fixtures, and every key is verified. Recommended.
-2. **Ask Garmin.** Their developer programme can say whether redistributing the
-   exercise enums in an open-source client is permitted.
-3. **Another source.** Any list used must have a licence compatible with MIT
-   redistribution; check its provenance before importing.
-
-## Adding an exercise
-
-Prefer adding a key when a new fixture shows it. The display name is derived
-from the key (`displayName`), so there is nothing else to keep in step. A new
-category can have an empty exercise list if Connect emitted it that way. Tests
-cover key shape, duplicates, lookup, and fixture coverage.
+Exercises.json is the same keys Connect's workout editor uses, not that SDK.
+The names are still Garmin's. **This is a reading of the situation, not legal
+advice.**

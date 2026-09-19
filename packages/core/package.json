@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint"
+    "lint": "oxlint",
+    "generate-catalog": "node scripts/generate-catalog.mjs"
   },
   "dependencies": {
     "zod": "^4.3.6"

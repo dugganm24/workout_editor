@@ -32,8 +32,8 @@ export interface ExerciseCategory {
   exercises: Exercise[];
 }
 
-/** The shape a key has to be in to reach Connect intact. */
-const KEY = /^[A-Z0-9]+(?:_[A-Z0-9]+)*$/;
+/** The shape a key has to be in to reach Connect intact. Leading `_` appears on numbered names. */
+const KEY = /^_?[A-Z0-9]+(?:_[A-Z0-9]+)*$/;
 
 export function isExerciseKey(key: string): boolean {
   return KEY.test(key);
