@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
 /**
- * Canonical workout model. This is the editor's own format, Garmin Connect
+ * Canonical workout model. This is the editor's own format; Garmin Connect
  * JSON (and any future targets like FIT) are compile targets converted to and
- * from this shape in `src/connect/`.
+ * from this shape.
  *
  * `schemaVersion` gates forward migrations. Any breaking change to these
  * schemas bumps the version and adds a migration so saved/shared workouts
@@ -31,7 +31,7 @@ export const WeightTargetSchema = z.object({
 
 export const ExerciseStepSchema = z.object({
   kind: z.literal('exercise'),
-  /** Exercise category key, e.g. "BENCH_PRESS". Taxonomy lives in src/exercises/. */
+  /** Exercise category key, e.g. "BENCH_PRESS". */
   category: z.string().min(1),
   /** Specific exercise key within the category, e.g. "BARBELL_BENCH_PRESS". */
   exercise: z.string().min(1).optional(),
@@ -98,7 +98,7 @@ export type Workout = z.infer<typeof WorkoutSchema>;
  * round count does not swing it.
  *
  * Lives beside the schema that defines the tree so every consumer that needs to
- * walk it — the library summary, a future duration estimate, the `src/connect/`
+ * walk it — the library summary, a future duration estimate, the format
  * converters — shares one definition of "descend into repeat, else leaf".
  */
 export function countLeafSteps(steps: WorkoutStep[]): number {
