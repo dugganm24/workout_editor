@@ -4,8 +4,8 @@ import { CATALOG } from './catalog.js';
  * The exercise taxonomy: the categories and exercise names Garmin Connect
  * understands, and the lookups the editor's picker is built on.
  *
- * Keys are Connect's own — `BENCH_PRESS`, `BARBELL_BENCH_PRESS` — and travel
- * into `ExerciseStep.category` / `.exercise` untouched, so converting a workout
+ * Keys are Connect's own — `BENCH_PRESS`, `BARBELL_ROW` — and travel into
+ * `ExerciseStep.category` / `.exercise` untouched, so converting a workout
  * needs no second mapping. Display names are derived from the keys rather than
  * stored beside them: one source of truth, and a key cannot be added to the
  * catalog without getting a name.
@@ -18,9 +18,9 @@ export interface ExerciseCategorySeed {
 }
 
 export interface Exercise {
-  /** Connect's `exerciseName`, e.g. `BARBELL_BENCH_PRESS`. */
+  /** Connect's `exerciseName`, e.g. `BARBELL_ROW`. */
   key: string;
-  /** Connect's `exerciseCategory` for it, e.g. `BENCH_PRESS`. */
+  /** Connect's `category` for it, e.g. `ROW`. */
   category: string;
   /** For people: "Barbell Bench Press". */
   name: string;

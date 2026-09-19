@@ -2,19 +2,20 @@
 
 The editor's exercise picker needs the categories and exercise names Garmin
 Connect understands, keyed exactly as its workout JSON expects them
-(`BENCH_PRESS` / `BARBELL_BENCH_PRESS`). That list lives in
+(`BENCH_PRESS` / `INCLINE_DUMBBELL_BENCH_PRESS`). That list lives in
 `packages/core/src/exercises/`.
 
 ## Where the keys come from
 
-`catalog.ts` is **hand-written and provisional**. It covers the lifts a first
-strength session needs, in the key shape Connect uses. Nothing has yet
-confirmed each key against Connect itself.
+`catalog.ts` is grown from the golden fixtures in
+`packages/core/test/fixtures/connect/`. Connect's workout JSON names a step with
+`category` + `exerciseName` (not `exerciseCategory`); those strings go into the
+catalog as-is. `exercises.test.ts` walks the fixtures and requires every pair
+to resolve.
 
-The golden fixtures ([#2](https://github.com/dugganm24/workout_editor/issues/2))
-are what confirms them: a real Connect export names its categories and
-exercises exactly as Connect expects them back. `exercises.test.ts` holds a
-pending test for that check.
+Connect sometimes emits a category with `exerciseName: ""` (a landmine under
+`SHOULDER_PRESS`, a calf raise with no variant). Those categories sit in the
+catalog with an empty exercise list.
 
 ## Why not Garmin's FIT SDK
 
@@ -49,7 +50,7 @@ matters, the options are roughly:
 
 ## Adding an exercise
 
-Add the key to the right category in `catalog.ts`. The display name is derived
-from the key (`displayName`), so there is nothing else to keep in step. If the
-category is new, add it with at least one exercise. Tests cover key shape,
-duplicates, and lookup.
+Prefer adding a key when a new fixture shows it. The display name is derived
+from the key (`displayName`), so there is nothing else to keep in step. A new
+category can have an empty exercise list if Connect emitted it that way. Tests
+cover key shape, duplicates, lookup, and fixture coverage.
