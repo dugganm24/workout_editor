@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/dugganm24/workout_editor/compare/v1.3.0...v1.4.0) (2026-09-20)
+
+
+### Features
+
+* **web:** export to and import from Garmin Connect JSON ([#21](https://github.com/dugganm24/workout_editor/issues/21)) ([be678bc](https://github.com/dugganm24/workout_editor/commit/be678bc26c84d561afedd3ab3200a129a2b87cae)), closes [#7](https://github.com/dugganm24/workout_editor/issues/7)
+
 ## [1.3.0](https://github.com/dugganm24/workout_editor/compare/v1.2.0...v1.3.0) (2026-09-20)
 
 
