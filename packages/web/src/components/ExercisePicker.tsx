@@ -58,7 +58,9 @@ export default function ExercisePicker({
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const listId = useId();
-  const options = open ? suggestions(draft ?? '') : [];
+  // The list answers to what the box shows, whether typed just now or saved.
+  const query = draft ?? value;
+  const options = open ? suggestions(query) : [];
   const highlighted = options[active];
 
   function pick(exercise: Exercise) {
@@ -75,7 +77,7 @@ export default function ExercisePicker({
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       // A closed list has no options yet; the arrow that opens it should also move.
-      const count = open ? options.length : suggestions(draft ?? '').length;
+      const count = open ? options.length : suggestions(query).length;
       if (!open) setOpen(true);
       const delta = event.key === 'ArrowDown' ? 1 : -1;
       setActive((current) => Math.min(Math.max(current + delta, -1), count - 1));

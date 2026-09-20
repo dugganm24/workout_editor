@@ -325,6 +325,25 @@ describe('WorkoutEditor', () => {
     });
   });
 
+  it('lists matches for the saved name when a filled box is focused again', async () => {
+    await store().createWorkout('Imported');
+    store().editSteps(() => [
+      {
+        kind: 'exercise',
+        category: 'BENCH_PRESS',
+        exercise: 'BARBELL_BENCH_PRESS',
+        duration: { type: 'reps', reps: 5 },
+      },
+    ]);
+    render(<OpenWorkout />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByLabelText('Exercise'));
+
+    expect(suggestions()[0]).toHaveTextContent('Barbell Bench Press');
+    for (const option of suggestions()) expect(option).toHaveTextContent(/bench/i);
+  });
+
   it('changes no layout while dragstart is still being handled', async () => {
     const user = await openEditor();
     await user.click(screen.getByRole('button', { name: '+ Repeat block' }));
