@@ -94,6 +94,13 @@ export default function WorkoutEditor({ workout }: { workout: Workout }) {
           <button
             type="button"
             className="rounded-md border border-gray-300 px-2.5 py-1 hover:bg-gray-50"
+            onClick={() => void exportWorkout(workout.id, 'connect')}
+          >
+            Export to Garmin
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-gray-300 px-2.5 py-1 hover:bg-gray-50"
             onClick={() => void exportWorkout(workout.id)}
           >
             Export backup

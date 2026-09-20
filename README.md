@@ -18,7 +18,7 @@ editor. Strength training first, other activity types are on the roadmap and ope
 
 The flow:
 
-1. Build your workout here and click **Export** to download a Garmin Connect JSON file.
+1. Build your workout here and click **Export to Garmin** to download a Garmin Connect JSON file.
 2. On [connect.garmin.com](https://connect.garmin.com)'s workouts page, click the extension's
    **Import Workout** button and select the file.
 3. The workout appears in your Connect library and syncs to your watch like any other workout.

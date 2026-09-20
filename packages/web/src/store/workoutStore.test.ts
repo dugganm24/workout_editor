@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { insertStep, SCHEMA_VERSION, type WorkoutStep } from '@workout-editor/core';
-import { serializeLibrary, serializeWorkout } from '../storage/files.ts';
+import { serializeConnect, serializeLibrary, serializeWorkout } from '../storage/files.ts';
 import * as storage from '../storage/workouts.ts';
 import { newWorkout } from '../storage/workouts.ts';
 import { getDb, WORKOUT_STORE } from '../storage/db.ts';
@@ -653,6 +653,21 @@ describe('workout store', () => {
 
     expect(store().summaries.map((s) => s.name)).toEqual(['Imported']);
     expect(store().error).toBeNull();
+  });
+
+  it('imports a Connect file and opens it to edit', async () => {
+    const built = { ...newWorkout('From Connect'), steps: [squat] };
+    await store().importWorkoutFile(asFile(serializeConnect(built)));
+
+    expect(store().error).toBeNull();
+    expect(store().currentWorkout).toMatchObject({ name: 'From Connect', steps: [squat] });
+    expect(store().summaries.map((s) => [s.name, s.stepCount])).toEqual([['From Connect', 1]]);
+  });
+
+  it('refuses to export an empty workout to Garmin', async () => {
+    await store().createWorkout('Push Day');
+    await store().exportWorkout(store().currentWorkout!.id, 'connect');
+    expect(store().error).toMatch(/no steps/);
   });
 
   it('imports a whole-library bundle', async () => {

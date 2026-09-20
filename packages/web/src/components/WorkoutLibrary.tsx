@@ -109,7 +109,7 @@ export default function WorkoutLibrary() {
             className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
             onClick={() => fileInput.current?.click()}
           >
-            Import backup
+            Import
           </button>
           <button
             type="button"
@@ -123,7 +123,7 @@ export default function WorkoutLibrary() {
             type="file"
             accept="application/json,.json"
             className="hidden"
-            aria-label="Import workout backup"
+            aria-label="Import a workout backup or Garmin Connect file"
             onChange={(event) => void handleImport(event)}
           />
         </div>
@@ -249,6 +249,13 @@ export default function WorkoutLibrary() {
                   onClick={() => void duplicateWorkout(summary.id)}
                 >
                   Duplicate
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border border-gray-300 px-2.5 py-1 hover:bg-gray-50"
+                  onClick={() => void exportWorkout(summary.id, 'connect')}
+                >
+                  Export to Garmin
                 </button>
                 <button
                   type="button"

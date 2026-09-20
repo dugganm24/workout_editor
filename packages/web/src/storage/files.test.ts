@@ -1,8 +1,52 @@
 import { describe, expect, it } from 'vitest';
-import { SCHEMA_VERSION } from '@workout-editor/core';
-import { parseWorkoutsFile, serializeLibrary, serializeWorkout, workoutFileName } from './files.ts';
+import { SCHEMA_VERSION, toConnect, type Workout } from '@workout-editor/core';
+import {
+  parseWorkoutsFile,
+  serializeConnect,
+  serializeLibrary,
+  serializeWorkout,
+  workoutFileName,
+} from './files.ts';
 import { InvalidWorkoutError, UnsupportedSchemaVersionError } from './migrate.ts';
 import { newWorkout } from './workouts.ts';
+
+const squats: Workout = {
+  ...newWorkout('Leg Day'),
+  steps: [
+    {
+      kind: 'exercise',
+      category: 'SQUAT',
+      exercise: 'BARBELL_BACK_SQUAT',
+      duration: { type: 'reps', reps: 5 },
+      target: { type: 'weight', kg: 100 },
+    },
+    { kind: 'rest', duration: { type: 'time', seconds: 90 } },
+  ],
+};
+
+describe('Garmin Connect files', () => {
+  it('exports the converter output verbatim, under a plain .json name', () => {
+    expect(JSON.parse(serializeConnect(squats))).toEqual(toConnect(squats));
+    expect(workoutFileName(squats, '.json')).toBe('leg-day.json');
+  });
+
+  it('imports a Connect file as one workout to open', () => {
+    const { workouts, unreadable, source } = parseWorkoutsFile(serializeConnect(squats));
+    expect(source).toBe('connect');
+    expect(unreadable).toEqual([]);
+    expect(workouts.map((w) => ({ name: w.name, steps: w.steps }))).toEqual([
+      { name: 'Leg Day', steps: squats.steps },
+    ]);
+  });
+
+  it('explains a Connect file it cannot convert', () => {
+    const running = { ...toConnect(squats), sportType: { sportTypeKey: 'running' } };
+    expect(() => parseWorkoutsFile(JSON.stringify(running))).toThrow(InvalidWorkoutError);
+    expect(() => parseWorkoutsFile(JSON.stringify(running))).toThrow(
+      /Garmin Connect.*unsupported sport: running/,
+    );
+  });
+});
 
 describe('canonical workout files', () => {
   it('round-trips a workout, keeping the name but assigning a fresh id', () => {
