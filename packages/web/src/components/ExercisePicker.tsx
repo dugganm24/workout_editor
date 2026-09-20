@@ -70,7 +70,8 @@ export default function ExercisePicker({
   }
 
   function keyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.altKey) return;
+    // Arrows and Enter during an IME composition steer the candidate list, not ours.
+    if (event.altKey || event.nativeEvent.isComposing) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       if (!open) setOpen(true);

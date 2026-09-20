@@ -293,6 +293,22 @@ describe('WorkoutEditor', () => {
     expect(store().currentWorkout?.steps).toHaveLength(1);
   });
 
+  it('leaves arrows and Enter during an IME composition to the candidate list', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    const box = screen.getByLabelText('Exercise');
+    await user.type(box, 'barbell bench');
+
+    fireEvent.keyDown(box, { key: 'ArrowDown', isComposing: true });
+    fireEvent.keyDown(box, { key: 'Enter', isComposing: true });
+
+    expect(store().currentWorkout?.steps).toHaveLength(1);
+    expect(store().currentWorkout?.steps[0]).toMatchObject({
+      category: 'UNKNOWN',
+      exercise: 'barbell bench',
+    });
+  });
+
   it('changes no layout while dragstart is still being handled', async () => {
     const user = await openEditor();
     await user.click(screen.getByRole('button', { name: '+ Repeat block' }));
