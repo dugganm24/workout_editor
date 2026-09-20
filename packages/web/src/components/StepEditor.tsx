@@ -9,6 +9,7 @@ import {
 } from 'react';
 import {
   countLeafSteps,
+  displayName,
   duplicateStep,
   getStep,
   insertStep,
@@ -39,6 +40,7 @@ import {
   PLACEHOLDER_CATEGORY,
   stepLike,
 } from './stepDefaults.ts';
+import ExercisePicker from './ExercisePicker.tsx';
 
 /**
  * The editable step tree. Rows mirror the canonical model one-for-one — an
@@ -578,65 +580,50 @@ function position(path: StepPath): number {
   return (path[path.length - 1] ?? 0) + 1;
 }
 
-/** Category and exercise keys are Garmin's SCREAMING_SNAKE enums until the taxonomy lands. */
-function humanize(key: string): string {
-  return key
-    .toLowerCase()
-    .split('_')
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
-
 function ExerciseRow({ step, path }: { step: ExerciseStep; path: StepPath }) {
   const { edit } = useEditor();
-  // The model has no room for a name that is only spaces, and stores none with
-  // spaces around it. A draft holds what was typed meanwhile, so the box does
-  // not swallow the space between two words as it is typed.
-  const [draft, setDraft] = useState<string | null>(null);
-  // A real category means the step came from Garmin's taxonomy (an import or a
-  // backup), and its `exercise` is a key within that category, not free text.
-  // Editing a key character by character would save one that exists nowhere,
-  // under a category that no longer matches, so such a step shows its name
-  // read-only until the exercise picker can offer valid choices. Steps built
-  // here carry the placeholder category, and their name is theirs to type.
+  // A real category means the exercise was picked from Garmin's taxonomy (here,
+  // or before an import), and `exercise` is a key within it, shown by its
+  // display name. Text typed over it is free text again: a key edited by hand
+  // would be one that exists nowhere, so the category goes back to the
+  // placeholder until the next pick sets both.
   const fromTaxonomy = step.category !== PLACEHOLDER_CATEGORY;
   // Unnamed rows are told apart by where they are: three new exercises would
   // otherwise offer three buttons called "Delete exercise".
   const label = fromTaxonomy
-    ? humanize(step.exercise ?? step.category)
+    ? displayName(step.exercise ?? step.category)
     : (step.exercise ?? `exercise ${position(path)}`);
 
   return (
     <StepRow step={step} path={path} label={label}>
-      {fromTaxonomy ? (
-        <span className="flex min-w-40 flex-1 flex-col text-sm">
-          <span className="font-medium text-gray-900">{label}</span>
-          {step.exercise && (
-            <span className="text-xs text-gray-500">{humanize(step.category)}</span>
-          )}
-        </span>
-      ) : (
-        <input
-          aria-label="Exercise"
-          placeholder="Exercise name"
-          className="min-w-40 flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm font-medium focus:border-gray-500 focus:outline-none"
-          value={draft ?? step.exercise ?? ''}
-          onChange={(event) => {
-            const typed = event.target.value;
-            setDraft(typed);
-            const name = typed.trim();
-            edit((steps) =>
-              replaceStep(steps, path, {
-                ...step,
-                // Absent rather than empty: `exercise` is optional in the model,
-                // and "" would be a name the schema rejects.
-                exercise: name === '' ? undefined : name,
-              }),
-            );
-          }}
-          onBlur={() => setDraft(null)}
-        />
+      <ExercisePicker
+        value={fromTaxonomy ? label : (step.exercise ?? '')}
+        onType={(typed) => {
+          // The model has no room for a name that is only spaces, and stores
+          // none with spaces around it; the box keeps what was typed meanwhile.
+          const name = typed.trim();
+          edit((steps) =>
+            replaceStep(steps, path, {
+              ...step,
+              category: PLACEHOLDER_CATEGORY,
+              // Absent rather than empty: `exercise` is optional in the model,
+              // and "" would be a name the schema rejects.
+              exercise: name === '' ? undefined : name,
+            }),
+          );
+        }}
+        onPick={(exercise) =>
+          edit((steps) =>
+            replaceStep(steps, path, {
+              ...step,
+              category: exercise.category,
+              exercise: exercise.key,
+            }),
+          )
+        }
+      />
+      {fromTaxonomy && step.exercise && (
+        <span className="text-xs text-gray-500">{displayName(step.category)}</span>
       )}
       <DurationFields step={step} path={path} />
       <NumberField
