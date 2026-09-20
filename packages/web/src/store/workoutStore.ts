@@ -1,7 +1,12 @@
 import { create } from 'zustand';
 import type { Workout, WorkoutStep } from '@workout-editor/core';
 import { errorMessage } from '../errors.ts';
-import { downloadLibraryJson, downloadWorkoutJson, parseWorkoutsFile } from '../storage/files.ts';
+import {
+  downloadConnectJson,
+  downloadLibraryJson,
+  downloadWorkoutJson,
+  parseWorkoutsFile,
+} from '../storage/files.ts';
 import type { WorkoutRecord } from '../storage/db.ts';
 import { migrateWorkout, UnsupportedSchemaVersionError } from '../storage/migrate.ts';
 import {
@@ -58,9 +63,13 @@ export interface WorkoutState {
   editSteps: (edit: (steps: WorkoutStep[]) => WorkoutStep[]) => void;
   /** Writes a pending autosave immediately. Resolves once it has been written. */
   flushSteps: () => Promise<void>;
-  /** Takes a reader rather than text so a failed read reports like any other import error. */
+  /**
+   * Takes a reader rather than text so a failed read reports like any other
+   * import error. A Connect file opens in the editor once saved.
+   */
   importWorkoutFile: (readFile: () => Promise<string>) => Promise<void>;
-  exportWorkout: (id: string) => Promise<void>;
+  /** As a canonical backup, or as Garmin Connect JSON for the extension. */
+  exportWorkout: (id: string, format?: 'backup' | 'connect') => Promise<void>;
   exportLibrary: () => Promise<void>;
   clearError: () => void;
 }
@@ -460,15 +469,19 @@ export const useWorkoutStore = create<WorkoutState>((set, get) => {
         });
         // Parse the whole file, then write it in one transaction: neither a bad
         // entry nor a failed write can leave the library half-imported.
-        const { workouts, unreadable } = parseWorkoutsFile(text);
-        await storage.putWorkouts(workouts, unreadable);
+        const { workouts, unreadable, source } = parseWorkoutsFile(text);
+        const records = await storage.putWorkouts(workouts, unreadable);
+        // The workout's record is the last one written (see putWorkouts).
+        const [workout] = workouts;
+        if (source === 'connect' && workout) openInEditor(workout, records.at(-1)?.seq ?? 0);
       }),
 
-    exportWorkout: async (id) =>
+    exportWorkout: async (id, format = 'backup') =>
       run(async () => {
         const workout = await storage.getWorkout(id);
         if (!workout) throw new WorkoutNotFoundError();
-        downloadWorkoutJson(workout);
+        if (format === 'connect') downloadConnectJson(workout);
+        else downloadWorkoutJson(workout);
       }, savedReadOnly),
 
     exportLibrary: async () =>

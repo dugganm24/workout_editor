@@ -1,11 +1,13 @@
-import { SCHEMA_VERSION, type Workout } from '@workout-editor/core';
+import { fromConnect, SCHEMA_VERSION, toConnect, type Workout } from '@workout-editor/core';
+import { errorMessage } from '../errors.ts';
 import { InvalidWorkoutError, migrateWorkout } from './migrate.ts';
 import { copyWorkout } from './workouts.ts';
 
 /**
- * Backup files in the editor's own *canonical* format — not the Garmin Connect
- * JSON the extension consumes. The two must stay clearly labelled in the UI so
- * nobody hands a canonical file to Connect.
+ * Two file formats: backups in the editor's own *canonical* format, and the
+ * Garmin Connect JSON the extension consumes. Exports must stay clearly
+ * labelled in the UI so nobody hands a canonical file to Connect; import
+ * accepts either and tells them apart itself.
  */
 
 const FILE_EXTENSION = '.workout.json';
@@ -27,17 +29,22 @@ interface LibraryFile {
   unreadable?: { id: string; reason: string; raw: unknown }[];
 }
 
-export function workoutFileName(workout: Workout): string {
+export function workoutFileName(workout: Workout, extension = FILE_EXTENSION): string {
   const slug = workout.name
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  return `${slug || 'workout'}${FILE_EXTENSION}`;
+  return `${slug || 'workout'}${extension}`;
 }
 
 export function serializeWorkout(workout: Workout): string {
   return `${JSON.stringify(workout, null, 2)}\n`;
+}
+
+/** Connect's own payload, as the extension's Import Workout button expects it. */
+export function serializeConnect(workout: Workout): string {
+  return `${JSON.stringify(toConnect(workout), null, 2)}\n`;
 }
 
 export function serializeLibrary(
@@ -74,6 +81,11 @@ export function downloadWorkoutJson(workout: Workout): void {
   download(serializeWorkout(workout), workoutFileName(workout));
 }
 
+/** Triggers a browser download of one workout as Garmin Connect JSON. */
+export function downloadConnectJson(workout: Workout): void {
+  download(serializeConnect(workout), workoutFileName(workout, '.json'));
+}
+
 /** Triggers a browser download of the whole library as a single backup file. */
 export function downloadLibraryJson(
   workouts: Workout[],
@@ -91,11 +103,18 @@ function isLibraryFile(raw: unknown): raw is { workouts: unknown[]; unreadable?:
   );
 }
 
-/** What a backup file restores: parsed workouts, plus payloads nothing can parse. */
+/** Connect payloads are the one kind of import that never carries a `schemaVersion`. */
+function isConnectFile(raw: unknown): boolean {
+  return typeof raw === 'object' && raw !== null && 'workoutSegments' in raw;
+}
+
+/** What an imported file yields: parsed workouts, plus payloads nothing can parse. */
 export interface ParsedBackup {
   workouts: Workout[];
   /** Raw records preserved by a previous export, restored without validation. */
   unreadable: unknown[];
+  /** A Connect file is one workout brought here to edit, not a library restore. */
+  source: 'backup' | 'connect';
 }
 
 function readUnreadable(value: unknown): unknown[] {
@@ -108,9 +127,10 @@ function readUnreadable(value: unknown): unknown[] {
 }
 
 /**
- * Parses a canonical backup file, accepting either a single workout or a
- * whole-library bundle. Results get fresh ids, so importing the same file twice
- * yields new workouts instead of silently overwriting existing ones.
+ * Parses an imported file: a Garmin Connect workout (as the extension exports
+ * it), a single canonical workout, or a whole-library bundle. Results get fresh
+ * ids, so importing the same file twice yields new workouts instead of silently
+ * overwriting existing ones.
  *
  * Records a previous export could not parse come back too, untouched: a backup
  * that refuses to restore the very records it was taken to preserve is not a
@@ -124,6 +144,17 @@ export function parseWorkoutsFile(text: string): ParsedBackup {
     throw new InvalidWorkoutError("That file isn't valid JSON.", { cause: error });
   }
 
+  if (isConnectFile(raw)) {
+    try {
+      return { workouts: [fromConnect(raw)], unreadable: [], source: 'connect' };
+    } catch (error) {
+      throw new InvalidWorkoutError(
+        `That Garmin Connect workout can't be imported: ${errorMessage(error)}.`,
+        { cause: error },
+      );
+    }
+  }
+
   const entries = isLibraryFile(raw) ? raw.workouts : [raw];
   const unreadable = isLibraryFile(raw) ? readUnreadable(raw.unreadable) : [];
   if (entries.length === 0 && unreadable.length === 0) {
@@ -135,5 +166,5 @@ export function parseWorkoutsFile(text: string): ParsedBackup {
     const workout = migrateWorkout(entry);
     return copyWorkout(workout, workout.name);
   });
-  return { workouts, unreadable };
+  return { workouts, unreadable, source: 'backup' };
 }

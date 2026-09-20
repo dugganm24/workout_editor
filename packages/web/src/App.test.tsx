@@ -28,6 +28,24 @@ describe('App', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('shows the Garmin instructions open on first visit, and closed once dismissed', async () => {
+    const user = userEvent.setup();
+    localStorage.removeItem('workout-editor:connect-help-seen');
+    const { unmount } = render(<App />);
+    const summary = screen.getByText('How to get a workout onto your Garmin watch');
+    expect(summary.closest('details')).toHaveAttribute('open');
+
+    await user.click(summary);
+    expect(summary.closest('details')).not.toHaveAttribute('open');
+
+    // Stays closed on the next visit, but is still there to open.
+    unmount();
+    render(<App />);
+    expect(
+      screen.getByText('How to get a workout onto your Garmin watch').closest('details'),
+    ).not.toHaveAttribute('open');
+  });
+
   it('routes to the open workout when one is set', async () => {
     await useWorkoutStore.getState().createWorkout('Push Day');
     render(<App />);
