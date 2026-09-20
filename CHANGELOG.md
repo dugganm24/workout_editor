@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/dugganm24/workout_editor/compare/v1.2.0...v1.3.0) (2026-09-20)
+
+
+### Features
+
+* **core:** two-way Garmin Connect JSON converter ([#19](https://github.com/dugganm24/workout_editor/issues/19)) ([d1f9470](https://github.com/dugganm24/workout_editor/commit/d1f94700a7dc9925a4154526c7919f6dc599b1c4))
+
 ## [1.2.0](https://github.com/dugganm24/workout_editor/compare/v1.1.0...v1.2.0) (2026-09-19)
 
 
