@@ -74,9 +74,11 @@ export default function ExercisePicker({
     if (event.altKey || event.nativeEvent.isComposing) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
+      // A closed list has no options yet; the arrow that opens it should also move.
+      const count = open ? options.length : suggestions(draft ?? '').length;
       if (!open) setOpen(true);
       const delta = event.key === 'ArrowDown' ? 1 : -1;
-      setActive((current) => Math.min(Math.max(current + delta, -1), options.length - 1));
+      setActive((current) => Math.min(Math.max(current + delta, -1), count - 1));
       return;
     }
     if (event.key === 'Enter' && highlighted) {

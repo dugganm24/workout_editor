@@ -309,6 +309,22 @@ describe('WorkoutEditor', () => {
     });
   });
 
+  it('highlights a match on the arrow that reopens a closed list', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.type(screen.getByLabelText('Exercise'), 'barbell bench');
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(store().currentWorkout?.steps).toHaveLength(1);
+    expect(store().currentWorkout?.steps[0]).toMatchObject({
+      category: 'BENCH_PRESS',
+      exercise: 'BARBELL_BENCH_PRESS',
+    });
+  });
+
   it('changes no layout while dragstart is still being handled', async () => {
     const user = await openEditor();
     await user.click(screen.getByRole('button', { name: '+ Repeat block' }));
