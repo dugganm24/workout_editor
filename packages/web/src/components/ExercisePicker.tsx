@@ -39,8 +39,8 @@ function suggestions(query: string): Exercise[] {
   const results = searchExercises(query, Infinity);
   const found = new Set(results.map(idOf));
   const recent = readRecents().filter((r) => found.has(idOf(r)));
-  const recentIds = new Set(recent.map(idOf));
-  return [...recent, ...results.filter((r) => !recentIds.has(idOf(r)))].slice(0, RESULTS_MAX);
+  const byId = new Map([...recent, ...results].map((e) => [idOf(e), e]));
+  return [...byId.values()].slice(0, RESULTS_MAX);
 }
 
 export default function ExercisePicker({
@@ -59,16 +59,19 @@ export default function ExercisePicker({
   const [active, setActive] = useState(-1);
   const listId = useId();
   // The list answers to what the box shows, whether typed just now or saved.
-  const query = draft ?? value;
-  const options = open ? suggestions(query) : [];
-  const highlighted = options[active];
+  const options = suggestions(draft ?? value);
+  const highlighted = open ? options[active] : undefined;
+
+  function close() {
+    setOpen(false);
+    setActive(-1);
+  }
 
   function pick(exercise: Exercise) {
     recordRecent(exercise);
     onPick(exercise);
     setDraft(null);
-    setOpen(false);
-    setActive(-1);
+    close();
   }
 
   function keyDown(event: React.KeyboardEvent<HTMLInputElement>) {
@@ -76,11 +79,9 @@ export default function ExercisePicker({
     if (event.altKey || event.nativeEvent.isComposing) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
-      // A closed list has no options yet; the arrow that opens it should also move.
-      const count = open ? options.length : suggestions(query).length;
-      if (!open) setOpen(true);
+      setOpen(true);
       const delta = event.key === 'ArrowDown' ? 1 : -1;
-      setActive((current) => Math.min(Math.max(current + delta, -1), count - 1));
+      setActive((current) => Math.min(Math.max(current + delta, -1), options.length - 1));
       return;
     }
     if (event.key === 'Enter' && highlighted) {
@@ -92,8 +93,7 @@ export default function ExercisePicker({
     }
     if (event.key === 'Escape' && open) {
       event.preventDefault();
-      setOpen(false);
-      setActive(-1);
+      close();
     }
   }
 
@@ -113,8 +113,7 @@ export default function ExercisePicker({
         onFocus={() => setOpen(true)}
         onBlur={() => {
           setDraft(null);
-          setOpen(false);
-          setActive(-1);
+          close();
         }}
         onChange={(event) => {
           setDraft(event.target.value);
