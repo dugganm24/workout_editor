@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/dugganm24/workout_editor/compare/v1.4.0...v1.5.0) (2026-09-21)
+
+
+### Features
+
+* **web:** exercise picker over the Garmin taxonomy ([#23](https://github.com/dugganm24/workout_editor/issues/23)) ([885da0e](https://github.com/dugganm24/workout_editor/commit/885da0e4e1c9801ca24355b8db188050fc187a57))
+
 ## [1.4.0](https://github.com/dugganm24/workout_editor/compare/v1.3.0...v1.4.0) (2026-09-20)
 
 
