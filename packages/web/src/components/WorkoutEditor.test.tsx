@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Profiler } from 'react';
 import { useWorkoutStore } from '../store/workoutStore.ts';
@@ -42,6 +42,9 @@ const savedSteps = async () => {
   const { getWorkout } = await import('../storage/workouts.ts');
   return (await getWorkout(id))?.steps ?? [];
 };
+
+/** The picker's open list of matches; the duration select has options of its own. */
+const suggestions = () => within(screen.getByRole('listbox')).getAllByRole('option');
 
 /** The drop zones a drag shows at the end of every list. */
 const tailZones = () => document.querySelectorAll('li.border-dashed');
@@ -290,6 +293,57 @@ describe('WorkoutEditor', () => {
     expect(store().currentWorkout?.steps).toHaveLength(1);
   });
 
+  it('leaves arrows and Enter during an IME composition to the candidate list', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    const box = screen.getByLabelText('Exercise');
+    await user.type(box, 'barbell bench');
+
+    fireEvent.keyDown(box, { key: 'ArrowDown', isComposing: true });
+    fireEvent.keyDown(box, { key: 'Enter', isComposing: true });
+
+    expect(store().currentWorkout?.steps).toHaveLength(1);
+    expect(store().currentWorkout?.steps[0]).toMatchObject({
+      category: 'UNKNOWN',
+      exercise: 'barbell bench',
+    });
+  });
+
+  it('highlights a match on the arrow that reopens a closed list', async () => {
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    await user.type(screen.getByLabelText('Exercise'), 'barbell bench');
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(store().currentWorkout?.steps).toHaveLength(1);
+    expect(store().currentWorkout?.steps[0]).toMatchObject({
+      category: 'BENCH_PRESS',
+      exercise: 'BARBELL_BENCH_PRESS',
+    });
+  });
+
+  it('lists matches for the saved name when a filled box is focused again', async () => {
+    await store().createWorkout('Imported');
+    store().editSteps(() => [
+      {
+        kind: 'exercise',
+        category: 'BENCH_PRESS',
+        exercise: 'BARBELL_BENCH_PRESS',
+        duration: { type: 'reps', reps: 5 },
+      },
+    ]);
+    render(<OpenWorkout />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByLabelText('Exercise'));
+
+    expect(suggestions()[0]).toHaveTextContent('Barbell Bench Press');
+    for (const option of suggestions()) expect(option).toHaveTextContent(/bench/i);
+  });
+
   it('changes no layout while dragstart is still being handled', async () => {
     const user = await openEditor();
     await user.click(screen.getByRole('button', { name: '+ Repeat block' }));
@@ -325,7 +379,7 @@ describe('WorkoutEditor', () => {
     expect(commits).toBe(settled);
   });
 
-  it('shows an imported step by its humanized Garmin names, read-only', async () => {
+  it('shows an imported step by its Garmin display names', async () => {
     await store().createWorkout('Imported');
     store().editSteps(() => [
       { kind: 'exercise', category: 'PLANK', duration: { type: 'open' }, notes: 'Keep hips level' },
@@ -338,15 +392,49 @@ describe('WorkoutEditor', () => {
     ]);
     render(<OpenWorkout />);
 
-    // A key edited by hand would be one that exists nowhere, so there is no box to edit it in.
-    expect(screen.queryByLabelText('Exercise')).not.toBeInTheDocument();
-    expect(screen.getByText('Plank')).toBeInTheDocument();
+    expect(exerciseNames()).toEqual(['Plank', 'Barbell Bench Press']);
     expect(screen.getByRole('button', { name: 'Delete Plank' })).toBeInTheDocument();
     expect(screen.getByText('Keep hips level')).toBeInTheDocument();
 
-    expect(screen.getByText('Barbell Bench Press')).toBeInTheDocument();
     expect(screen.getByText('Bench Press')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete Barbell Bench Press' })).toBeInTheDocument();
+  });
+
+  it('picks an exercise from the taxonomy by keyboard, and leads with it next time', async () => {
+    localStorage.removeItem('workout-editor:recent-exercises');
+    const user = await openEditor();
+    await user.click(screen.getByRole('button', { name: '+ Exercise' }));
+    const box = screen.getByLabelText('Exercise');
+
+    await user.type(box, 'barbell bench');
+    expect(suggestions()[0]).toHaveTextContent('Barbell Bench Press');
+    // Typed text is a name of its own until a match is taken.
+    expect(store().currentWorkout?.steps[0]).toMatchObject({
+      category: 'UNKNOWN',
+      exercise: 'barbell bench',
+    });
+
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(store().currentWorkout?.steps[0]).toMatchObject({
+      category: 'BENCH_PRESS',
+      exercise: 'BARBELL_BENCH_PRESS',
+    });
+    // That Enter took the match; it did not also add a step.
+    expect(exerciseNames()).toEqual(['Barbell Bench Press']);
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+
+    // A second Enter adds the next step, whose empty box leads with the recent pick.
+    await user.keyboard('{Enter}');
+    expect(screen.getAllByLabelText('Exercise')[1]).toHaveFocus();
+    expect(suggestions()[0]).toHaveTextContent('Barbell Bench Press');
+
+    // Typing over a pick makes it free text again, under no category.
+    await user.click(suggestions()[0]!);
+    await user.type(screen.getAllByLabelText('Exercise')[1]!, 'x');
+    expect(store().currentWorkout?.steps[1]).toMatchObject({
+      category: 'UNKNOWN',
+      exercise: 'Barbell Bench Pressx',
+    });
   });
 
   it('shows no category for a step the editor added itself', async () => {

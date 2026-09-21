@@ -3,9 +3,9 @@ import type { ExerciseStep, RepeatBlock, RestStep, WorkoutStep } from '@workout-
 /** What a freshly added step contains before the user has said anything. */
 
 /**
- * Every new exercise starts here until the taxonomy lands (#3): the model
- * requires a category, and nothing yet knows which categories exist. The
- * picker will set both fields; today's free-text box writes only `exercise`.
+ * Every new exercise starts here: the model requires a category, and a step
+ * has none until an exercise is picked from the taxonomy, which sets both
+ * fields. Free text typed instead writes only `exercise`, under this.
  */
 export const PLACEHOLDER_CATEGORY = 'UNKNOWN';
 
